@@ -34,17 +34,18 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
-      - name: 🌟 智能获取 OpenWrt 最新版本号
+      - name: 🌟 智能获取/设定 OpenWrt 版本号
         id: get_version
         run: |
-          if [ "${{ github.event.inputs.openwrt_version }}" == "latest" ]; then
-            echo "正在查询 OpenWrt 官方最新稳定版..."
+          INPUT_VER="${{ inputs.openwrt_version }}"
+          if [ -z "$INPUT_VER" ] || [ "$INPUT_VER" == "latest" ]; then
+            echo "检测到 latest 选项或为自动排程，正在查询官方最新稳定版..."
             LATEST_VER=$(curl -s "https://api.github.com/repos/openwrt/openwrt/releases" | grep '"tag_name":' | grep -v 'rc' | head -n 1 | cut -d '"' -f 4 | sed 's/v//')
             echo "🎉 成功获取到最新版本: $LATEST_VER"
             echo "OWRT_VERSION=$LATEST_VER" >> $GITHUB_ENV
           else
-            echo "使用手动指定的版本: ${{ github.event.inputs.openwrt_version }}"
-            echo "OWRT_VERSION=${{ github.event.inputs.openwrt_version }}" >> $GITHUB_ENV
+            echo "使用手动指定的版本: $INPUT_VER"
+            echo "OWRT_VERSION=$INPUT_VER" >> $GITHUB_ENV
           fi
 
       - name: 安装 Ubuntu 原生编译依赖
@@ -64,9 +65,16 @@ jobs:
           ROOTFS_SIZE: ${{ inputs.profile }}
           MANAGEMENT_IP: ${{ inputs.custom_ip }}
         run: |
+          # 🌟 核心修复：强制清除网页复制粘贴带来的 Windows 回车符
+          sed -i 's/\r$//' build.sh
+          
           chmod +x build.sh
           cp build.sh imagebuilder/
           cd imagebuilder
+          
+          # 双重保险
+          sed -i 's/\r$//' build.sh
+          
           ./build.sh
 
       - name: 生成版本标签
