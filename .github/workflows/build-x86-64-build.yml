@@ -1,0 +1,101 @@
+name: OpenWrt x86_64 动态定制构建
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      openwrt_version:
+        description: 'OpenWrt 版本(latest智能选择最新版本)'
+        required: true
+        default: 'latest'
+        type: choice
+        options:
+          - 'latest'
+          - '25.12.2'
+          - '24.10.6'
+      profile:
+        description: 'RootFS 分区大小 (单位: MB)'
+        required: true
+        default: '1024'
+        type: string
+      custom_ip:
+        description: '路由器管理地址 (仅填IP，无需加掩码)'
+        required: true
+        default: '192.168.100.1'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+      
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+
+      - name: 🌟 智能获取 OpenWrt 最新版本号
+        id: get_version
+        run: |
+          if [ "${{ github.event.inputs.openwrt_version }}" == "latest" ]; then
+            echo "正在查询 OpenWrt 官方最新稳定版..."
+            LATEST_VER=$(curl -s "https://api.github.com/repos/openwrt/openwrt/releases" | grep '"tag_name":' | grep -v 'rc' | head -n 1 | cut -d '"' -f 4 | sed 's/v//')
+            echo "🎉 成功获取到最新版本: $LATEST_VER"
+            echo "OWRT_VERSION=$LATEST_VER" >> $GITHUB_ENV
+          else
+            echo "使用手动指定的版本: ${{ github.event.inputs.openwrt_version }}"
+            echo "OWRT_VERSION=${{ github.event.inputs.openwrt_version }}" >> $GITHUB_ENV
+          fi
+
+      - name: 安装 Ubuntu 原生编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip bzip2 patch python3 findutils zstd
+
+      - name: 下载并解压 ImageBuilder
+        run: |
+          echo ">>> 正在下载 OpenWrt ${{ env.OWRT_VERSION }} 版本 <<<"
+          wget -q https://downloads.openwrt.org/releases/${{ env.OWRT_VERSION }}/targets/x86/64/openwrt-imagebuilder-${{ env.OWRT_VERSION }}-x86-64.Linux-x86_64.tar.zst
+          tar -I zstd -xf openwrt-imagebuilder-${{ env.OWRT_VERSION }}-x86-64.Linux-x86_64.tar.zst
+          mv openwrt-imagebuilder-${{ env.OWRT_VERSION }}-x86-64.Linux-x86_64 imagebuilder
+
+      - name: 运行定制脚本
+        env:
+          ROOTFS_SIZE: ${{ inputs.profile }}
+          MANAGEMENT_IP: ${{ inputs.custom_ip }}
+        run: |
+          chmod +x build.sh
+          cp build.sh imagebuilder/
+          cd imagebuilder
+          ./build.sh
+
+      - name: 生成版本标签
+        id: tag
+        run: echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+
+      - name: 发布到 Releases (发行版)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.release_tag }}
+          name: OpenWrt ${{ env.OWRT_VERSION }} 定制版 [IP ${{ inputs.custom_ip }}]
+          files: imagebuilder/output-firmware/*
+          body: |
+            **🎉 OpenWrt ${{ env.OWRT_VERSION }} x86_64 终极定制版**
+            
+            **网络配置：**
+            - 🌐 **后台地址**: `http://${{ inputs.custom_ip }}`
+            - 🌍 **WAN (外网)**: 绑定 `eth0`。
+            - 🔌 **LAN (网桥)**: 多网口下会自动桥接其余网口。
+            
+            **固件参数：**
+            - 📦 分区大小: `${{ inputs.profile }} MB`
+            - 💿 引导格式: `squashfs-combined-efi`
+            - 🚀 软件源: 中科大镜像源 (USTC)
+            
+            **核心功能：**
+            - 🛡️ OpenClash (已预装兼容版 Meta 内核)
+            - 🎨 Argon 主题 (默认启用)
+            - 📁 KSMBD 极速内网共享
+            - 💻 TTYD 网页终端
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
