@@ -6,7 +6,7 @@ ROOTFS_SIZE=${ROOTFS_SIZE:-1024}
 MANAGEMENT_IP=${MANAGEMENT_IP:-192.168.100.1}
 
 if [[ ! "$MANAGEMENT_IP" == *"/"* ]]; then
-  MANAGEMENT_IP="${MANAGEMENT_IP}/24"
+    MANAGEMENT_IP="${MANAGEMENT_IP}/24"
 fi
 
 echo ">>> 1. 自定义固件参数 <<<"
