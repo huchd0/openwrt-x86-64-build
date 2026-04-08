@@ -174,13 +174,15 @@ PKG_WIFI_BT="-wpad-basic-mbedtls -wpad-basic-wolfssl wpad-openssl \
 kmod-mt7925e kmod-mt7925-firmware \
 kmod-btusb bluez-daemon kmod-input-uinput"
 
-# 6. 网络诊断与性能监控 (排障全家桶)
-PKG_MONITOR="nano htop ethtool tcpdump mtr conntrack iftop screen"
+# 6. 网络诊断与性能监控 (排障全家桶 + 统计底层服务)
+PKG_MONITOR="nano htop ethtool tcpdump mtr conntrack iftop screen \
+collectd-mod-thermal collectd-mod-sensors"
 
-# 7. LuCI 应用插件 (网页端实用功能)
+# 7. LuCI 应用插件 (网页端实用功能 + 性能报表)
 PKG_LUCI_APPS="luci-app-ttyd luci-i18n-ttyd-zh-cn \
 luci-app-ksmbd luci-i18n-ksmbd-zh-cn \
-luci-app-nlbwmon luci-i18n-nlbwmon-zh-cn"
+luci-app-nlbwmon luci-i18n-nlbwmon-zh-cn \
+luci-app-statistics luci-i18n-statistics-zh-cn"
 
 # 8. 合并所有模块并赋值给 PACKAGES
 PACKAGES="$PKG_CORE $PKG_DISK $PKG_DEPENDS $PKG_NETWORK $PKG_WIFI_BT $PKG_MONITOR $PKG_LUCI_APPS"
