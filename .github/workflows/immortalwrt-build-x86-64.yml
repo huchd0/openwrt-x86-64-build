@@ -1,4 +1,4 @@
-name: build-x86-64-immortalwrt-auto
+name: immortalwrt-build-x86-64
 
 on:
   workflow_dispatch:
@@ -92,7 +92,7 @@ jobs:
       - name: 上传发布资产
         uses: softprops/action-gh-release@v2.4.1
         with:
-          tag_name: Autobuild-${{ env.LUCI_VERSION }}
+          tag_name: immortalwrt-${{ env.LUCI_VERSION }}
           body_path: ${{ github.workspace }}/router-info.md
           files: |
             ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi.img.gz
