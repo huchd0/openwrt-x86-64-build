@@ -83,7 +83,6 @@ fi
 uci commit network
 
 # --- C. 智能大分区挂载保护 ---
-# 这里的 \$ 确保命令在路由器开机时才执行
 TARGET_UUID=\$(blkid -s UUID -o value /dev/sda3 2>/dev/null)
 if [ -n "\$TARGET_UUID" ]; then
     echo "config 'global'" > /etc/config/fstab
@@ -101,23 +100,12 @@ if [ -n "\$TARGET_UUID" ]; then
     uci commit fstab
 fi
 
-# --- D. 软件源与插件安装 ---
+# --- D. 软件源与插件安装 (纯离线秒装模式) ---
 if [ -d "/etc/apk/repositories.d" ]; then
     sed -i 's/downloads.openwrt.org/mirrors.ustc.edu.cn\/openwrt/g' /etc/apk/repositories.d/*.list
 fi
 
-# 增加网络连通性检测，防止因首次开机没网导致依赖下载失败
-echo "Waiting for network to install APKs..."
-count=0
-while ! ping -c 1 -W 1 223.5.5.5 &> /dev/null; do
-    sleep 2
-    count=\$((count+1))
-    if [ \$count -ge 15 ]; then
-        echo "Network timeout, trying offline install..."
-        break
-    fi
-done
-
+# 直接执行本地安装，因为依赖已经在打包时放入 PACKAGES 中了
 apk add -q --allow-untrusted /root/*.apk
 rm -f /root/*.apk
 
