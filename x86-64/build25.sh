@@ -42,12 +42,15 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
     echo "⬇️ 正在为 OpenClash 准备核心文件..."
     mkdir -p files/etc/openclash/core
     
-    META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
-    if wget -q --show-progress -O- "$META_URL" | tar xOvz > files/etc/openclash/core/clash_meta; then
+    # 优化1：使用 mirror.ghproxy.com 加速节点，彻底告别 raw.githubusercontent.com 的网络抽风
+    META_URL="https://mirror.ghproxy.com/https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
+    
+    # 优化2：加上 -T 10 -t 2，遇到死链最多等 20 秒强制跳过，绝不卡住整个编译流程！
+    if wget -q --show-progress -T 10 -t 2 -O- "$META_URL" | tar xOvz > files/etc/openclash/core/clash_meta; then
         chmod +x files/etc/openclash/core/clash_meta
         echo "✅ Meta 核心预装成功"
     else
-        echo "⚠️ 核心下载失败，编译将继续，但固件内需手动更新。"
+        echo "⚠️ 核心下载超时，编译将继续，固件刷好后需在后台手动更新。"
     fi
 fi
 
