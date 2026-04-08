@@ -1,10 +1,10 @@
-name: immortalwrt-build-x86-64
+name: build-x86-64-immortalwrt-auto
 
 on:
   workflow_dispatch:
     inputs:
       luci_version:
-        description: "选择版本 (auto 自动选择最新稳定版)"
+        description: "选择版本 (auto 仅拉取最新稳定版)"
         required: true
         default: "auto"
         type: choice
@@ -45,8 +45,7 @@ jobs:
               sort -V | tail -n 1)
             
             if [ -z "$LATEST_TAG" ]; then
-              echo "❌ 未找到符合正则条件的稳定版标签！下面输出拉取到的原始标签列表供排查："
-              curl -s "$API_URL" | jq -r '.results[].name' | grep 'x86-64'
+              echo "❌ 未找到符合条件的稳定版！"
               exit 1
             fi
             
@@ -65,14 +64,13 @@ jobs:
         run: |
           echo "🚀 开始构建，版本: ${{ env.LUCI_VERSION }}，分区: ${{ inputs.profile }}MB"
           
-          # 创建全新的安全输出目录，取代危险的 bin 映射
           mkdir -p ${{ github.workspace }}/output
           
+          # 注意看这里：我已经删除了那个危险的 imm25.config 映射行
           docker run --rm -i \
             --user root \
             -v "${{ github.workspace }}/output:/output" \
             -v "${{ github.workspace }}/files:/home/build/immortalwrt/files" \
-            -v "${{ github.workspace }}/x86-64/imm25.config:/home/build/immortalwrt/.config" \
             -v "${{ github.workspace }}/shell:/home/build/immortalwrt/shell" \
             -v "${{ github.workspace }}/x86-64/build25.sh:/home/build/immortalwrt/build.sh" \
             -e PROFILE="${{ inputs.profile }}" \
@@ -94,7 +92,6 @@ jobs:
         with:
           tag_name: Autobuild-${{ env.LUCI_VERSION }}
           body_path: ${{ github.workspace }}/router-info.md
-          # 上传路径改为我们全新的 output 目录
           files: |
             ${{ github.workspace }}/output/*squashfs-combined-efi.img.gz
         env:
