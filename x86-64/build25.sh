@@ -37,7 +37,7 @@ PACKAGES="$PACKAGES luci-theme-argon luci-app-argon-config luci-i18n-argon-confi
 # 网络与防火墙
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
 # 科学上网相关
-PACKAGES="$PACKAGES xray-core hysteria luci-i18n-passwall-zh-cn luci-app-openclash luci-i18n-homeproxy-zh-cn"
+PACKAGES="$PACKAGES xray-core hysteria luci-app-openclash luci-i18n-homeproxy-zh-cn"
 # 合并自定义包
 PACKAGES="$PACKAGES $CUSTOM_PACKAGES"
 
