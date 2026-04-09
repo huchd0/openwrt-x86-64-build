@@ -27,7 +27,6 @@ echo ">>> 2. 准备初始化文件夹 <<<"
 mkdir -p files/root
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/init.d
-mkdir -p files/etc/config
 
 echo ">>> 3. 下载第三方 APK 插件与 OpenClash 核心 <<<"
 OPENCLASH_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
@@ -40,6 +39,7 @@ if [ -n "$ARGON_URL" ]; then
     wget -qO files/root/luci-theme-argon.apk "$ARGON_URL"
 fi
 
+echo "正在下载 OpenClash Meta 兼容版内核..."
 mkdir -p files/etc/openclash/core
 wget -qO files/etc/openclash/core/meta.tar.gz "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz"
 tar -zxf files/etc/openclash/core/meta.tar.gz -C files/etc/openclash/core/
@@ -47,39 +47,82 @@ mv files/etc/openclash/core/clash files/etc/openclash/core/clash_meta
 chmod +x files/etc/openclash/core/clash_meta
 rm -f files/etc/openclash/core/meta.tar.gz
 
+echo "正在注入 MT7925 官方底层固件..."
+mkdir -p files/lib/firmware/mediatek/mt7925
+wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
+
 
 # ===================================================================
-# --- 核心：直接把配置写死，变成路由器的“出厂设置” ---
+# --- E. 智能潜伏脚本：自动抓取硬件路径 + 修复图表 ---
 # ===================================================================
-# 这段配置会在编译时直接塞进固件，开机即是这个状态
-cat << EOF > files/etc/config/wireless
-config wifi-device 'radio0'
-	option type 'mac80211'
-	option path 'pci0000:00/0000:00:14.1/0000:06:00.0'
-	option band '5g'
-	option channel '149'
-	option htmode 'EHT80'
-	option country 'AU'
-	option cell_density '0'
-	option txpower '23'
-	# 最关键的一步：出厂默认就是开启状态
-	option disabled '0'
+cat << 'EOF_WATCHER' > files/etc/init.d/smart-init
+#!/bin/sh /etc/rc.common
+START=99
 
-config wifi-iface 'default_radio0'
-	option device 'radio0'
-	option network 'lan'
-	option mode 'ap'
-	option ssid 'mywifi7'
-	option encryption 'sae-mixed'
-	option key 'Aa666666'
-	# 强力纠错：WPA3必须开启PMF
-	option ieee80211w '1'
-EOF
+start() {
+    (
+        # 1. 给系统 15 秒钟去完全加载大硬盘和网卡驱动
+        sleep 15
+        
+        # 2. 彻底修复图表权限问题
+        if [ -d "/mnt/sda3" ]; then
+            mkdir -p /mnt/sda3/collectd_rrd
+            # 暴力赋予最高权限，确保 collectd 绝对能写入数据
+            chmod -R 777 /mnt/sda3/collectd_rrd
+        fi
+
+        # 3. 动态抓取网卡路径并配置
+        # 删除旧的空配置，强制系统重新扫描物理硬件！这就实现了“自动抓取 pci 路径”
+        rm -f /etc/config/wireless
+        wifi config
+        sleep 2
+        
+        # 如果系统扫描到了网卡，就开始覆盖我们的黄金配置
+        if uci show wireless | grep -q 'wifi-device'; then
+            
+            # 遍历所有被抓取出来的硬件网卡，开启并设置地区
+            for radio in $(uci show wireless | grep '=wifi-device' | cut -d'.' -f2 | cut -d'=' -f1); do
+                uci set wireless.${radio}.disabled='0'
+                uci set wireless.${radio}.country='AU'
+                # 让系统自己决定信道和频段，保证最稳
+            done
+            
+            # 遍历所有的信号接口，统一强行改成 mywifi7 和 WPA3 加密
+            for iface in $(uci show wireless | grep '=wifi-iface' | cut -d'.' -f2 | cut -d'=' -f1); do
+                uci set wireless.${iface}.ssid='mywifi7'
+                uci set wireless.${iface}.encryption='sae-mixed'
+                uci set wireless.${iface}.key='Aa666666'
+                uci set wireless.${iface}.ieee80211w='1'
+                uci set wireless.${iface}.network='lan'
+                uci set wireless.${iface}.mode='ap'
+            done
+            
+            uci commit wireless
+            wifi reload
+        fi
+        
+        # 4. 图表大复活：必须在网络和 Wi-Fi 都启动完毕后，最后重启图表服务！
+        sleep 5
+        /etc/init.d/luci_statistics restart
+        /etc/init.d/collectd restart
+        
+        # 任务完成，自我销毁
+        /etc/init.d/smart-init disable
+        rm -f /etc/init.d/smart-init
+    ) &
+}
+EOF_WATCHER
+chmod +x files/etc/init.d/smart-init
 
 
 echo ">>> 4. 编写全自动开机初始化脚本 <<<"
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
+
+# 激活智能潜伏脚本
+/etc/init.d/smart-init enable
 
 # --- A. 核心网络设置 ---
 uci set network.lan.ipaddr='$MANAGEMENT_IP'
@@ -113,6 +156,7 @@ uci commit network
 
 # --- C. 智能大分区挂载保护 ---
 if ! lsblk | grep -q sda3; then
+    echo "Detecting unallocated space, creating /dev/sda3..."
     echo -e "w" | fdisk /dev/sda >/dev/null 2>&1
     echo -e "n\n3\n\n\nw" | fdisk /dev/sda >/dev/null 2>&1
     partprobe /dev/sda >/dev/null 2>&1 || block info >/dev/null 2>&1 || true
@@ -142,7 +186,7 @@ if [ -n "\$TARGET_UUID" ]; then
     mount /dev/sda3 /mnt/sda3 2>/dev/null || block mount
 fi
 
-# --- D. 基础性能监控配置 ---
+# --- D. 基础性能监控配置 (仅写入规则，启动交由后台脚本) ---
 if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     
     [ ! -f "/etc/config/luci_statistics" ] && touch /etc/config/luci_statistics
@@ -150,6 +194,7 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     
     if [ -d "/mnt/sda3/" ]; then
         mkdir -p /mnt/sda3/collectd_rrd
+        chmod 777 /mnt/sda3/collectd_rrd
         uci set luci_statistics.collectd_rrdtool=statistics
         uci set luci_statistics.collectd_rrdtool.enable='1'
         uci set luci_statistics.collectd_rrdtool.DataDir='/mnt/sda3/collectd_rrd'
@@ -173,23 +218,8 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
 
     uci commit luci_statistics
     
-    # 彻底激活收集器
-    /etc/init.d/luci_statistics enable
-    /etc/init.d/luci_statistics restart
-    /etc/init.d/collectd enable
-    /etc/init.d/collectd restart
-    
     touch /etc/collectd_inited
 fi
-
-# --- E. 极速开机重启无线服务 ---
-# 开机时稍微等一下，等网卡通电后，强制重启无线服务，让系统读取我们预埋的配置
-(
-    sleep 15
-    wifi reload
-    sleep 3
-    /etc/init.d/collectd restart
-) &
 
 # --- F. 软件源与插件安装 ---
 if [ -d "/etc/apk/repositories.d" ]; then
