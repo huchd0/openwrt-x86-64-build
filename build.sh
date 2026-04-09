@@ -31,17 +31,14 @@ mkdir -p files/etc/init.d
 echo ">>> 3. 下载第三方 APK 插件与 OpenClash 核心 <<<"
 OPENCLASH_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
 if [ -n "$OPENCLASH_URL" ]; then
-    echo "正在下载 OpenClash APK..."
     wget -qO files/root/luci-app-openclash.apk "$OPENCLASH_URL"
 fi
 
 ARGON_URL=$(curl -s https://api.github.com/repos/jerrykuku/luci-theme-argon/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
 if [ -n "$ARGON_URL" ]; then
-    echo "正在下载 Argon 主题 APK..."
     wget -qO files/root/luci-theme-argon.apk "$ARGON_URL"
 fi
 
-echo "正在下载 OpenClash Meta 兼容版内核..."
 mkdir -p files/etc/openclash/core
 wget -qO files/etc/openclash/core/meta.tar.gz "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz"
 tar -zxf files/etc/openclash/core/meta.tar.gz -C files/etc/openclash/core/
@@ -49,79 +46,78 @@ mv files/etc/openclash/core/clash files/etc/openclash/core/clash_meta
 chmod +x files/etc/openclash/core/clash_meta
 rm -f files/etc/openclash/core/meta.tar.gz
 
+# 【已恢复】你的原版 MT7925 固件注入（这是 Wi-Fi 能启动的命根子）
 echo "正在注入 MT7925 官方底层固件..."
 mkdir -p files/lib/firmware/mediatek/mt7925
-wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin \
-"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin"
-wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin \
-"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
-wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin \
-"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
-echo ">>> 4. 编写全自动开机初始化脚本 <<<"
+
 # ===================================================================
-# --- E. 极速潜伏模式：自动获取物理路径，并覆盖你的专属 WiFi 设置 ---
+# --- E. 绝对可靠：独立的 Wi-Fi 延时开启脚本 ---
 # ===================================================================
-cat << 'EOF_WATCHER' > files/etc/init.d/wifi-watcher
+cat << 'EOF_WIFI' > files/etc/init.d/wifi-enabler
 #!/bin/sh /etc/rc.common
 START=99
 
 start() {
     (
-        # 循环探测无线网卡，最多等待 60 秒
-        for i in $(seq 1 30); do
-            # 【核心修复】：强制系统自动识别硬件，生成带有正确 option path 的配置文件
-            wifi config
-            
-            # 如果系统成功识别并生成了 radio0，就开始修改参数
-            if uci get wireless.radio0 >/dev/null 2>&1; then
-                
-                # 保留系统自动生成的 option type 和 option path，只覆盖你的参数
-                uci set wireless.radio0.disabled='0'
-                uci set wireless.radio0.band='5g'
-                uci set wireless.radio0.channel='149'
-                uci set wireless.radio0.htmode='EHT80'
-                uci set wireless.radio0.country='AU'
-                uci set wireless.radio0.cell_density='0'
-                uci set wireless.radio0.txpower='23'
-
-                if uci get wireless.default_radio0 >/dev/null 2>&1; then
-                    uci set wireless.default_radio0.device='radio0'
-                    uci set wireless.default_radio0.network='lan'
-                    uci set wireless.default_radio0.mode='ap'
-                    uci set wireless.default_radio0.ssid='mywifi7'
-                    uci set wireless.default_radio0.encryption='sae-mixed'
-                    uci set wireless.default_radio0.key='Aa666666'
-                    
-                    # ⚠️ WPA3 (sae-mixed) 必须开启管理帧保护，否则直接罢工
-                    uci set wireless.default_radio0.ieee80211w='1'
-                fi
-
-                uci commit wireless
-                wifi reload
-                
-                # 顺手重启统计服务，激活 Network 图表
-                sleep 3
-                /etc/init.d/luci_statistics restart
-                /etc/init.d/collectd restart
-                
-                # 任务完成，自我销毁
-                /etc/init.d/wifi-watcher disable
-                rm -f /etc/init.d/wifi-watcher
+        # 1. 监测硬件：等待最多 60 秒，直到系统彻底认出无线网卡
+        WAIT_TIME=0
+        while [ $WAIT_TIME -lt 60 ]; do
+            if iwinfo | grep -q "ESSID"; then
                 break
             fi
             sleep 2
+            WAIT_TIME=$((WAIT_TIME + 2))
         done
+        
+        # 2. 硬件就绪后，强制重新生成配置，防止出现幽灵网卡
+        rm -f /etc/config/wireless
+        wifi config
+        sleep 2
+        
+        # 3. 强力写入：统一开启，统一名称 mywifi7
+        if uci show wireless | grep -q 'wifi-device'; then
+            for radio in $(uci show wireless | grep '=wifi-device' | cut -d'.' -f2 | cut -d'=' -f1); do
+                uci set wireless.${radio}.disabled='0'
+                uci set wireless.${radio}.country='AU'
+            done
+            
+            for iface in $(uci show wireless | grep '=wifi-iface' | cut -d'.' -f2 | cut -d'=' -f1); do
+                uci set wireless.${iface}.ssid='mywifi7'
+                uci set wireless.${iface}.encryption='sae-mixed'
+                uci set wireless.${iface}.key='Aa666666'
+                # ⚠️ WPA3必须开启PMF
+                uci set wireless.${iface}.ieee80211w='1'
+                uci set wireless.${iface}.network='lan'
+                uci set wireless.${iface}.mode='ap'
+            done
+            
+            uci commit wireless
+            wifi reload
+            
+            # Wi-Fi开启后重启收集器，把无线流量纳入图表
+            sleep 3
+            /etc/init.d/collectd restart
+        fi
+        
+        # 任务完成，自我销毁，以后开机不再执行
+        /etc/init.d/wifi-enabler disable
+        rm -f /etc/init.d/wifi-enabler
     ) &
 }
-EOF_WATCHER
-chmod +x files/etc/init.d/wifi-watcher
+EOF_WIFI
+chmod +x files/etc/init.d/wifi-enabler
 
+
+echo ">>> 4. 编写全自动开机初始化脚本 <<<"
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
 
-# --- 激活 Wi-Fi 潜伏脚本 ---
-/etc/init.d/wifi-watcher enable
+# 激活 Wi-Fi 唤醒脚本
+/etc/init.d/wifi-enabler enable
 
 # --- A. 核心网络设置 ---
 uci set network.lan.ipaddr='$MANAGEMENT_IP'
@@ -155,13 +151,10 @@ uci commit network
 
 # --- C. 智能大分区挂载保护 ---
 if ! lsblk | grep -q sda3; then
-    echo "Detecting unallocated space, creating /dev/sda3..."
     echo -e "w" | fdisk /dev/sda >/dev/null 2>&1
     echo -e "n\n3\n\n\nw" | fdisk /dev/sda >/dev/null 2>&1
-    
     partprobe /dev/sda >/dev/null 2>&1 || block info >/dev/null 2>&1 || true
     sleep 3
-    
     if lsblk | grep -q sda3; then
         mkfs.ext4 -F /dev/sda3 >/dev/null 2>&1
     fi
@@ -183,19 +176,24 @@ if [ -n "\$TARGET_UUID" ]; then
     uci set fstab.@mount[-1].enabled='1'
     uci commit fstab
     
+    # 【已恢复】强制挂载大硬盘，防止后续统计配置找不到目录
     mkdir -p /mnt/sda3
     mount /dev/sda3 /mnt/sda3 2>/dev/null || block mount
 fi
 
 # --- D. 基础性能监控配置 ---
+# 【已恢复】原版的 touch 逻辑，确保存储图表绝对生效
 if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
+    
     [ ! -f "/etc/config/luci_statistics" ] && touch /etc/config/luci_statistics
     uci set luci_statistics.collectd.enable='1'
     
-    mkdir -p /mnt/sda3/collectd_rrd
-    uci set luci_statistics.collectd_rrdtool=statistics
-    uci set luci_statistics.collectd_rrdtool.enable='1'
-    uci set luci_statistics.collectd_rrdtool.DataDir='/mnt/sda3/collectd_rrd'
+    if [ -d "/mnt/sda3/" ]; then
+        mkdir -p /mnt/sda3/collectd_rrd
+        uci set luci_statistics.collectd_rrdtool=statistics
+        uci set luci_statistics.collectd_rrdtool.enable='1'
+        uci set luci_statistics.collectd_rrdtool.DataDir='/mnt/sda3/collectd_rrd'
+    fi
 
     uci set luci_statistics.collectd_thermal=statistics
     uci set luci_statistics.collectd_thermal.enable='1'
@@ -215,6 +213,7 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
 
     uci commit luci_statistics
     /etc/init.d/collectd enable
+    /etc/init.d/collectd restart
     
     touch /etc/collectd_inited
 fi
@@ -255,6 +254,7 @@ PKG_WIFI_BT="-wpad-basic-mbedtls -wpad-basic-wolfssl wpad-openssl \
 kmod-mt7925e kmod-mt7925-firmware \
 kmod-btusb bluez-daemon kmod-input-uinput"
 
+# 包含了 Network 接口收集模块
 PKG_MONITOR="nano htop ethtool tcpdump mtr conntrack iftop screen \
 collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool"
 
