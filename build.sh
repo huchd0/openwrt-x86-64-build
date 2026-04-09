@@ -26,6 +26,7 @@ echo "CONFIG_GRUB_IMAGES=n" >> .config
 echo ">>> 2. 准备初始化文件夹 <<<"
 mkdir -p files/root
 mkdir -p files/etc/uci-defaults
+mkdir -p files/etc/init.d
 
 echo ">>> 3. 下载第三方 APK 插件与 OpenClash 核心 <<<"
 OPENCLASH_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
@@ -57,9 +58,73 @@ wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin \
 wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin \
 "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
+
+# ===================================================================
+# --- E. 独立抽出的 Wi-Fi 潜伏唤醒脚本 (解决自动获取路径和开机崩溃) ---
+# ===================================================================
+cat << 'EOF_WATCHER' > files/etc/init.d/wifi-watcher
+#!/bin/sh /etc/rc.common
+START=99
+
+start() {
+    (
+        # 循环探测无线网卡，最多等待 60 秒
+        for i in $(seq 1 30); do
+            # 强制系统探测硬件并自动生成包含正确的 option path 配置
+            wifi config
+            
+            # 如果成功生成了 radio0，就开始修改参数
+            if uci get wireless.radio0 >/dev/null 2>&1; then
+                
+                # 按照你的要求覆盖配置 (不改动系统探测出的 path 和 type)
+                uci set wireless.radio0.disabled='0'
+                uci set wireless.radio0.band='5g'
+                uci set wireless.radio0.channel='149'
+                uci set wireless.radio0.htmode='EHT80'
+                uci set wireless.radio0.country='AU'
+                uci set wireless.radio0.cell_density='0'
+                uci set wireless.radio0.txpower='23'
+
+                if uci get wireless.default_radio0 >/dev/null 2>&1; then
+                    uci set wireless.default_radio0.device='radio0'
+                    uci set wireless.default_radio0.network='lan'
+                    uci set wireless.default_radio0.mode='ap'
+                    uci set wireless.default_radio0.ssid='mywifi7'
+                    uci set wireless.default_radio0.encryption='sae-mixed'
+                    uci set wireless.default_radio0.key='Aa666666'
+                    
+                    # ⚠️ 强力纠错：sae-mixed (WPA3) 必须开启管理帧保护，否则网卡报错禁用！
+                    uci set wireless.default_radio0.ieee80211w='1'
+                fi
+
+                uci commit wireless
+                wifi reload
+                
+                # 顺手重启统计服务，激活 Network 图表
+                sleep 3
+                /etc/init.d/luci_statistics restart
+                /etc/init.d/collectd restart
+                
+                # 任务完成，自我销毁
+                /etc/init.d/wifi-watcher disable
+                rm -f /etc/init.d/wifi-watcher
+                break
+            fi
+            sleep 2
+        done
+    ) &
+}
+EOF_WATCHER
+chmod +x files/etc/init.d/wifi-watcher
+
+
 echo ">>> 4. 编写全自动开机初始化脚本 <<<"
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
+
+# --- 激活 Wi-Fi 潜伏脚本 ---
+/etc/init.d/wifi-watcher enable
+
 # --- A. 核心网络设置 ---
 uci set network.lan.ipaddr='$MANAGEMENT_IP'
 uci delete network.@device[0].ports 2>/dev/null
@@ -156,79 +221,7 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     touch /etc/collectd_inited
 fi
 
-# --- E. 守护进程：异步智能加载双频 WiFi 与 重启统计服务 ---
-cat << 'INITSCRIPT' > /etc/init.d/firstboot-async-setup
-#!/bin/sh /etc/rc.common
-START=99
-
-start() {
-    (
-        for i in \$(seq 1 30); do
-            # 探测物理网卡
-            wifi config
-            
-            # 检查系统是否已经成功生成了无线配置
-            if uci get wireless.@wifi-device[0] >/dev/null 2>&1; then
-                
-                # 【核心修复】：智能遍历所有被识别的网卡（解决 2.4G 和 5G 错位问题）
-                for radio in \$(uci show wireless | grep '=wifi-device' | cut -d'.' -f2 | cut -d'=' -f1); do
-                    
-                    uci set wireless.\${radio}.disabled='0'
-                    uci set wireless.\${radio}.country='AU'
-                    uci set wireless.\${radio}.cell_density='0'
-                    
-                    # 获取当前这块网卡的频段
-                    band=\$(uci get wireless.\${radio}.band 2>/dev/null)
-                    
-                    if [ "\$band" = "5g" ]; then
-                        uci set wireless.\${radio}.channel='149'
-                        uci set wireless.\${radio}.htmode='EHT80'
-                        uci set wireless.\${radio}.txpower='23'
-                    elif [ "\$band" = "2g" ]; then
-                        uci set wireless.\${radio}.channel='1'
-                        uci set wireless.\${radio}.htmode='HE40'
-                        uci set wireless.\${radio}.txpower='20'
-                    fi
-                    
-                    # 设置对应的 Wi-Fi 信号名称
-                    if uci get wireless.default_\${radio} >/dev/null 2>&1; then
-                        if [ "\$band" = "5g" ]; then
-                            uci set wireless.default_\${radio}.ssid='mywifi7_5G'
-                        else
-                            uci set wireless.default_\${radio}.ssid='mywifi7_2.4G'
-                        fi
-                        
-                        uci set wireless.default_\${radio}.encryption='sae-mixed'
-                        uci set wireless.default_\${radio}.key='Aa666666'
-                        
-                        # 【核心修复 2】：WPA3 加密强制要求开启管理帧保护 (PMF)
-                        uci set wireless.default_\${radio}.ieee80211w='1'
-                        
-                        uci set wireless.default_\${radio}.network='lan'
-                        uci set wireless.default_\${radio}.mode='ap'
-                    fi
-                done
-                
-                uci commit wireless
-                wifi reload
-                break
-            fi
-            sleep 2
-        done
-        
-        # 网卡就绪后，重启 collectd 服务让图表生效
-        /etc/init.d/collectd restart
-        
-        /etc/init.d/firstboot-async-setup disable
-        rm -f /etc/init.d/firstboot-async-setup
-    ) &
-}
-INITSCRIPT
-
-chmod +x /etc/init.d/firstboot-async-setup
-/etc/init.d/firstboot-async-setup enable
-
-# --- F. 软件源与插件安装 ---
+# --- E. 软件源与插件安装 ---
 if [ -d "/etc/apk/repositories.d" ]; then
     sed -i 's/downloads.openwrt.org/mirrors.ustc.edu.cn\/openwrt/g' /etc/apk/repositories.d/*.list
 fi
