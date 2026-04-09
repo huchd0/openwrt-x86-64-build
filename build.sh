@@ -26,17 +26,16 @@ echo "CONFIG_GRUB_IMAGES=n" >> .config
 echo ">>> 2. 准备初始化文件夹 <<<"
 mkdir -p files/root
 mkdir -p files/etc/uci-defaults
+mkdir -p files/etc/config
 
 echo ">>> 3. 下载第三方 APK 插件与 OpenClash 核心 <<<"
 OPENCLASH_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
 if [ -n "$OPENCLASH_URL" ]; then
-    echo "正在下载 OpenClash APK..."
     wget -qO files/root/luci-app-openclash.apk "$OPENCLASH_URL"
 fi
 
 ARGON_URL=$(curl -s https://api.github.com/repos/jerrykuku/luci-theme-argon/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
 if [ -n "$ARGON_URL" ]; then
-    echo "正在下载 Argon 主题 APK..."
     wget -qO files/root/luci-theme-argon.apk "$ARGON_URL"
 fi
 
@@ -63,9 +62,35 @@ wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin \
 "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
 
+# ===================================================================
+# --- 写入你的专属原版 Wi-Fi 配置 (开机静默加载，等你手动开启) ---
+# ===================================================================
+cat << EOF > files/etc/config/wireless
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path 'pci0000:00/0000:00:14.1/0000:06:00.0'
+	option band '5g'
+	option channel '149'
+	option htmode 'EHT80'
+	option country 'AU'
+	option cell_density '0'
+	option txpower '23'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'mywifi7'
+	option encryption 'sae-mixed'
+	option key 'Aa666666'
+	option ieee80211w '0'
+EOF
+
+
 echo ">>> 4. 编写全自动开机初始化脚本 <<<"
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
+
 # --- A. 核心网络设置 ---
 uci set network.lan.ipaddr='$MANAGEMENT_IP'
 uci delete network.@device[0].ports 2>/dev/null
@@ -96,12 +121,11 @@ else
 fi
 uci commit network
 
-# --- C. 智能大分区挂载保护 ---
+# --- C. 智能大分区强制挂载保护 ---
 if ! lsblk | grep -q sda3; then
-    echo "Detecting unallocated space, creating /dev/sda3..."
     echo -e "w" | fdisk /dev/sda >/dev/null 2>&1
     echo -e "n\n3\n\n\nw" | fdisk /dev/sda >/dev/null 2>&1
-    partprobe /dev/sda >/dev/null 2>&1 || block info >/dev/null 2>&1 || true
+    partprobe /dev/sda >/dev/null 2>&1 || true
     sleep 3
     if lsblk | grep -q sda3; then
         mkfs.ext4 -F /dev/sda3 >/dev/null 2>&1
@@ -124,37 +148,25 @@ if [ -n "\$TARGET_UUID" ]; then
     uci set fstab.@mount[-1].enabled='1'
     uci commit fstab
     
-    # 强制挂载，确保下一步图表文件夹创建不失败
+    # 立刻创建目录并挂载，确保下一步图表能写进硬盘！
     mkdir -p /mnt/sda3
-    mount /dev/sda3 /mnt/sda3 2>/dev/null || block mount
+    mount /dev/sda3 /mnt/sda3 2>/dev/null || true
 fi
 
-# --- D. 自动初始化 Wi-Fi 黄金设置 (保留你的原配) ---
-wifi config
-if uci get wireless.radio0 >/dev/null 2>&1; then
-    uci set wireless.radio0.disabled='0'
-    uci set wireless.radio0.band='5g'
-    uci set wireless.radio0.channel='149'
-    uci set wireless.radio0.htmode='EHT80'
-    uci set wireless.radio0.country='AU'
-    uci set wireless.radio0.cell_density='0'
-    uci set wireless.radio0.txpower='23'
-    
-    uci set wireless.default_radio0.ssid='mywifi7'
-    uci set wireless.default_radio0.encryption='sae-mixed'
-    uci set wireless.default_radio0.key='Aa666666'
-    # WPA3要求必须开启管理帧保护
-    uci set wireless.default_radio0.ieee80211w='1'
-    uci set wireless.default_radio0.network='lan'
-    uci set wireless.default_radio0.mode='ap'
-    
-    uci commit wireless
-fi
-
-# --- F. 终极图表修复：带“翻译官”的自动拉起机制 ---
-if [ -x "/etc/init.d/luci_statistics" ] && [ ! -f "/etc/collectd_inited" ]; then
+# --- D. 终极性能监控图表修复 (补齐刷新间隔等核心引擎参数) ---
+if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     
     [ ! -f "/etc/config/luci_statistics" ] && touch /etc/config/luci_statistics
+    
+    # 🎯【核心修复】：补齐 collectd 引擎的底座参数（解决不点保存就不工作的 Bug）
+    uci set luci_statistics.collectd=statistics
+    uci set luci_statistics.collectd.BaseDir='/var/run/collectd'
+    uci set luci_statistics.collectd.Include='/etc/collectd/conf.d'
+    uci set luci_statistics.collectd.PIDFile='/var/run/collectd.pid'
+    uci set luci_statistics.collectd.PluginDir='/usr/lib/collectd'
+    uci set luci_statistics.collectd.TypesDB='/usr/share/collectd/types.db'
+    uci set luci_statistics.collectd.Interval='30'     # 这就是关键的刷新频率参数！
+    uci set luci_statistics.collectd.ReadThreads='2'
     uci set luci_statistics.collectd.enable='1'
     
     if [ -d "/mnt/sda3/" ]; then
@@ -167,13 +179,17 @@ if [ -x "/etc/init.d/luci_statistics" ] && [ ! -f "/etc/collectd_inited" ]; then
 
     uci set luci_statistics.collectd_thermal=statistics
     uci set luci_statistics.collectd_thermal.enable='1'
+    
     uci set luci_statistics.collectd_sensors=statistics
     uci set luci_statistics.collectd_sensors.enable='1'
+    
     uci set luci_statistics.collectd_interface=statistics
     uci set luci_statistics.collectd_interface.enable='1'
     uci set luci_statistics.collectd_interface.ignoreselected='0'
+    
     uci set luci_statistics.collectd_cpu=statistics
     uci set luci_statistics.collectd_cpu.enable='1'
+    
     uci set luci_statistics.collectd_ping=statistics
     uci set luci_statistics.collectd_ping.enable='1'
     uci delete luci_statistics.collectd_ping.Hosts 2>/dev/null
@@ -182,15 +198,11 @@ if [ -x "/etc/init.d/luci_statistics" ] && [ ! -f "/etc/collectd_inited" ]; then
 
     uci commit luci_statistics
     
-    # 【核心大招】：模拟你在网页上的点击操作！
-    # 将“翻译官”配置重载任务丢进后台，倒数 30 秒。
-    # 此时 Wi-Fi 彻底启动了，硬盘也稳了，它会自动生成 collectd.conf 并拉起画图引擎！
-    (
-        sleep 30
-        /etc/init.d/luci_statistics enable
-        /etc/init.d/collectd enable
-        /etc/init.d/luci_statistics restart
-    ) &
+    # 重启引擎，使配置立即生效
+    /etc/init.d/luci_statistics enable
+    /etc/init.d/luci_statistics restart
+    /etc/init.d/collectd enable
+    /etc/init.d/collectd restart
     
     touch /etc/collectd_inited
 fi
@@ -199,6 +211,7 @@ fi
 if [ -d "/etc/apk/repositories.d" ]; then
     sed -i 's/downloads.openwrt.org/mirrors.ustc.edu.cn\/openwrt/g' /etc/apk/repositories.d/*.list
 fi
+
 apk add -q --allow-untrusted /root/*.apk
 rm -f /root/*.apk
 
@@ -229,9 +242,9 @@ PKG_WIFI_BT="-wpad-basic-mbedtls -wpad-basic-wolfssl wpad-openssl \
 kmod-mt7925e kmod-mt7925-firmware \
 kmod-btusb bluez-daemon kmod-input-uinput"
 
-# 已补齐 collectd-mod-rrdtool 和 collectd-mod-interface
+# 包含了你成功画图所需的所有依赖
 PKG_MONITOR="nano htop ethtool tcpdump mtr conntrack iftop screen \
-collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool"
+collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool collectd-mod-iwinfo"
 
 PKG_LUCI_APPS="luci-app-ttyd luci-i18n-ttyd-zh-cn \
 luci-app-ksmbd luci-i18n-ksmbd-zh-cn \
