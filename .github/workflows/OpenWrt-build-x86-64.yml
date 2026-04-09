@@ -65,16 +65,13 @@ jobs:
           ROOTFS_SIZE: ${{ inputs.profile }}
           MANAGEMENT_IP: ${{ inputs.custom_ip }}
         run: |
-          # 🌟 核心修复：强制清除网页复制粘贴带来的 Windows 回车符
+          # 核心修复：强制清除网页复制粘贴带来的 Windows 回车符，防止脚本报错
           sed -i 's/\r$//' build.sh
-          
           chmod +x build.sh
           cp build.sh imagebuilder/
           cd imagebuilder
           
-          # 双重保险
-          sed -i 's/\r$//' build.sh
-          
+          # 执行你强大的 build.sh
           ./build.sh
 
       - name: 生成版本标签
@@ -88,22 +85,13 @@ jobs:
           name: OpenWrt ${{ env.OWRT_VERSION }} 定制版 [IP ${{ inputs.custom_ip }}]
           files: imagebuilder/output-firmware/*
           body: |
-            **🎉 OpenWrt ${{ env.OWRT_VERSION }} x86_64 终极定制版**
+            **🎉 晓敏专属：OpenWrt ${{ env.OWRT_VERSION }} x86_64 终极定制版**
             
-            **网络配置：**
-            - 🌐 **后台地址**: `http://${{ inputs.custom_ip }}`
-            - 🌍 **WAN (外网)**: 绑定 `eth0`。
-            - 🔌 **LAN (网桥)**: 多网口下会自动桥接其余网口。
-            
-            **固件参数：**
-            - 📦 分区大小: `${{ inputs.profile }} MB`
-            - 💿 引导格式: `squashfs-combined-efi`
-            - 🚀 软件源: 中科大镜像源 (USTC)
-            
-            **核心功能：**
-            - 🛡️ OpenClash (已预装兼容版 Meta 内核)
-            - 🎨 Argon 主题 (默认启用)
-            - 📁 KSMBD 极速内网共享
-            - 💻 TTYD 网页终端
+            **核心特性：**
+            - 🌐 **管理后台**: `http://${{ inputs.custom_ip }}`
+            - 📦 **分区大小**: `${{ inputs.profile }} MB` (首次开机自动扩容挂载sda3)
+            - 📶 **无线网络**: MT7925 固件深度集成，开机自动散发 `mywifi7` 信号
+            - 🛡️ **核心插件**: OpenClash (预置 Meta 内核)、Argon主题
+            - 📊 **性能监控**: CPU、温度、传感器、双Ping (114/8.8.8.8) 开机自动激活并持久化到 sda3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
