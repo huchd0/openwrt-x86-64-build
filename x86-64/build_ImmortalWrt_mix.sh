@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# 1. 基础环境参数
+# 1. 基础环境参数 (Docker 传入)
 ROOTFS_SIZE=${ROOTFS_SIZE:-1024}
 MANAGEMENT_IP=${MANAGEMENT_IP:-192.168.100.1}
 [ [[ ! "$MANAGEMENT_IP" == *"/"* ]] ] && MANAGEMENT_IP="${MANAGEMENT_IP}/24"
@@ -9,18 +9,16 @@ MANAGEMENT_IP=${MANAGEMENT_IP:-192.168.100.1}
 echo ">>> 1. 自定义固件参数 <<<"
 echo "CONFIG_TARGET_KERNEL_PARTSIZE=64" >> .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE" >> .config
-# 仅生成 UEFI Squashfs
+# 仅生成 UEFI Squashfs，提升编译速度
 for fmt in EXT4FS TARGZ VMDK VDI VHDX QCOW2 ISO GRUB; do echo "CONFIG_TARGET_ROOTFS_${fmt}=n" >> .config 2>/dev/null || echo "CONFIG_${fmt}_IMAGES=n" >> .config; done
 
 echo ">>> 2. 准备初始化文件夹 <<<"
 mkdir -p files/root files/etc/uci-defaults
 
 echo ">>> 3. 下载插件 (ImmortalWrt IPK) <<<"
-# OpenClash
 OC_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.ipk" | cut -d '"' -f 4)
 [ -n "$OC_URL" ] && wget -qO files/root/luci-app-openclash.ipk "$OC_URL"
 
-# Argon Theme
 AG_URL=$(curl -s https://api.github.com/repos/jerrykuku/luci-theme-argon/releases | grep -m 1 "browser_download_url.*\.ipk" | cut -d '"' -f 4)
 [ -n "$AG_URL" ] && wget -qO files/root/luci-theme-argon.ipk "$AG_URL"
 
@@ -57,8 +55,7 @@ else
 fi
 uci commit network
 
-# --- C. 核心：动态抓取 sda3 UUID 并配置挂载 ---
-# 路由器启动时现场识别硬件
+# --- C. 动态抓取 sda3 UUID 并配置挂载 ---
 sleep 3
 REAL_UUID=\$(blkid -s UUID -o value /dev/sda3 2>/dev/null)
 if [ -n "\$REAL_UUID" ]; then
@@ -69,8 +66,7 @@ if [ -n "\$REAL_UUID" ]; then
     uci commit fstab
 fi
 
-# --- D. 镜像源与插件自动安装 ---
-# 换源至中科大
+# --- D. 镜像源与插件安装 ---
 if [ -f "/etc/opkg/distfeeds.conf" ]; then
     sed -i 's/downloads.immortalwrt.org/mirrors.ustc.edu.cn\/immortalwrt/g' /etc/opkg/distfeeds.conf
 fi
@@ -91,7 +87,4 @@ ip-full iptables-mod-tproxy iptables-mod-extra ruby ruby-yaml kmod-tun unzip iwi
 echo ">>> 6. 开始打包 <<<"
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files"
 
-echo ">>> 7. 提取固件 <<<"
-mkdir -p output-firmware
-cp bin/targets/x86/64/*combined-efi.img.gz output-firmware/ 2>/dev/null || true
-echo ">>> 全部构建任务已完成！ <<<"
+echo ">>> 容器内构建流程执行完毕 <<<"
