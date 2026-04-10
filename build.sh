@@ -26,7 +26,7 @@ echo "CONFIG_GRUB_IMAGES=n" >> .config
 echo ">>> 2. 准备初始化文件夹 <<<"
 mkdir -p files/root
 mkdir -p files/etc/uci-defaults
-mkdir -p files/etc/config
+mkdir -p files/etc/init.d
 
 echo ">>> 3. 下载第三方 APK 插件与 OpenClash 核心 <<<"
 OPENCLASH_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
@@ -62,34 +62,68 @@ wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin \
 "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
 
-# ===================================================================
-# --- 写入你的专属原版 Wi-Fi 配置 (开机静默加载，等你手动开启) ---
-# ===================================================================
-cat << EOF > files/etc/config/wireless
-config wifi-device 'radio0'
-	option type 'mac80211'
-	option path 'pci0000:00/0000:00:14.1/0000:06:00.0'
-	option band '5g'
-	option channel '149'
-	option htmode 'EHT80'
-	option country 'AU'
-	option cell_density '0'
-	option txpower '23'
-
-config wifi-iface 'default_radio0'
-	option device 'radio0'
-	option network 'lan'
-	option mode 'ap'
-	option ssid 'mywifi7'
-	option encryption 'sae-mixed'
-	option key 'Aa666666'
-	option ieee80211w '0'
-EOF
-
-
 echo ">>> 4. 编写全自动开机初始化脚本 <<<"
+
+# ===================================================================
+# --- 🎯 核心黑科技：后台自动抓取真实 PCI 路径，注入专属 Wi-Fi 参数 ---
+# ===================================================================
+cat << 'EOF_WIFI' > files/etc/init.d/wifi-auto-patch
+#!/bin/sh /etc/rc.common
+START=99
+
+start() {
+    (
+        WAIT=0
+        # 躲在后台等，最多等一分钟，直到系统自动探测出物理网卡
+        while [ $WAIT -lt 30 ]; do
+            # 强制系统探测硬件并生成配置
+            wifi config
+            if uci get wireless.radio0 >/dev/null 2>&1; then
+                break
+            fi
+            sleep 2
+            WAIT=$((WAIT+1))
+        done
+
+        # 一旦发现系统抓到了真实的 PCI 路径 (radio0 存在)
+        if uci get wireless.radio0 >/dev/null 2>&1; then
+            # 保留系统抓到的 option path，只覆盖你的参数
+            uci set wireless.radio0.band='5g'
+            uci set wireless.radio0.channel='149'
+            uci set wireless.radio0.htmode='EHT80'
+            uci set wireless.radio0.country='AU'
+            uci set wireless.radio0.cell_density='0'
+            uci set wireless.radio0.txpower='23'
+            
+            # 找到无线接口，注入你的名字和密码
+            for iface in $(uci show wireless | grep '=wifi-iface' | cut -d'.' -f2 | cut -d'=' -f1); do
+                uci set wireless.${iface}.ssid='mywifi7'
+                uci set wireless.${iface}.encryption='sae-mixed'
+                uci set wireless.${iface}.key='Aa666666'
+                # 强力纠错：WPA3必须开启PMF
+                uci set wireless.${iface}.ieee80211w='1'
+                uci set wireless.${iface}.network='lan'
+                uci set wireless.${iface}.mode='ap'
+            done
+            
+            # 提交保存，但不去启动它，让你可以在 LuCI 里手动点击开启
+            uci commit wireless
+        fi
+        
+        # 任务完成，自我销毁
+        /etc/init.d/wifi-auto-patch disable
+        rm -f /etc/init.d/wifi-auto-patch
+    ) &
+}
+EOF_WIFI
+chmod +x files/etc/init.d/wifi-auto-patch
+
+
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
+
+# 注册我们的 Wi-Fi 智能补全服务
+/etc/init.d/wifi-auto-patch enable
 
 # --- A1. 核心网络设置 ---
 uci set network.lan.ipaddr='$MANAGEMENT_IP'
@@ -100,6 +134,7 @@ uci delete network.lan.type 2>/dev/null
 # --- A2. 强行设置时区为中国 (Asia/Shanghai) ---
 uci set system.@system[0].timezone='CST-8'
 uci set system.@system[0].zonename='Asia/Shanghai'
+uci set system.@system[0].hostname='Tanxm'
 uci commit system
 
 # --- B. 智能网口分配逻辑 ---
@@ -158,7 +193,7 @@ if [ -n "\$TARGET_UUID" ]; then
     mount /dev/sda3 /mnt/sda3 2>/dev/null || true
 fi
 
-# --- D. 终极性能监控图表修复 (采用你的“幽灵配置”神操作) ---
+# --- D. 终极性能监控图表修复 (采用你的 MQTT 幽灵配置神操作) ---
 if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     
     [ ! -f "/etc/config/luci_statistics" ] && touch /etc/config/luci_statistics
@@ -173,7 +208,7 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     uci set luci_statistics.collectd.ReadThreads='2'
     uci set luci_statistics.collectd.enable='1'
     
-    # 🎯 你的神来之笔：利用假配置骗开图表管道，不装包也能白嫖！
+    # 🎯 你的神来之笔：利用假配置骗开图表假死管道
     uci del luci_statistics.collectd_network.enable 2>/dev/null || true
     uci set luci_statistics.collectd_mqtt=statistics
 
@@ -250,7 +285,7 @@ PKG_WIFI_BT="-wpad-basic-mbedtls -wpad-basic-wolfssl wpad-openssl \
 kmod-mt7925e kmod-mt7925-firmware \
 kmod-btusb bluez-daemon kmod-input-uinput"
 
-# 已将 collectd-mod-mqtt 移除，保持固件极度轻量
+# 纯净版，不包含导致报错的 mqtt 插件包
 PKG_MONITOR="nano htop ethtool tcpdump mtr conntrack iftop screen \
 collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool collectd-mod-iwinfo"
 
