@@ -1,4 +1,4 @@
-name: build-x86-64-immortalwrt-25.12.x
+name: immortalwrt-build-x86-64（Docker）
 
 on:
   workflow_dispatch:
@@ -31,19 +31,11 @@ on:
         options:
           - 'yes'
           - 'no'
-      enable_pppoe:
-        description: "是否预设 PPPoE 开机自动拨号?"
-        required: true
-        default: 'no'
-        type: choice
-        options:
-        - 'yes'
-        - 'no'
       pppoe_account:
-        description: "宽带账号 (若启用 PPPoE 则必填)"
+        description: "宽带账号 (留空则默认为 DHCP 上网)"
         required: false
       pppoe_password:
-        description: "宽带密码 (若启用 PPPoE 则必填)"
+        description: "宽带密码 (若填写了账号，此处必填)"
         required: false
 
 jobs:
@@ -67,16 +59,16 @@ jobs:
         run: |
           mkdir -p "${{ github.workspace }}/custom"
           echo "${{ github.event.inputs.custom_router_ip }}" > "${{ github.workspace }}/custom/custom_router_ip.txt"
-          echo "✅ 管理地址文件已生成"
+          echo "✅ 管理地址文件已生成: ${{ github.event.inputs.custom_router_ip }}"
       
-      - name: Validate PPPoE Inputs
+      - name: Check PPPoE Inputs (Graceful Fallback)
         run: |
-          if [[ "${{ inputs.enable_pppoe }}" == "yes" ]]; then
-            if [[ -z "${{ inputs.pppoe_account }}" || -z "${{ inputs.pppoe_password }}" ]]; then
-              echo "❌ 错误: 启用 PPPoE 时必须提供宽带账号和密码！"
-              exit 1
-            fi
-            echo "✅ PPPoE 信息验证通过"
+          if [[ -n "${{ github.event.inputs.pppoe_account }}" && -n "${{ github.event.inputs.pppoe_password }}" ]]; then
+            echo "✅ 检测到完整的宽带账号和密码，将启用 PPPoE 自动拨号。"
+          elif [[ -n "${{ github.event.inputs.pppoe_account }}" || -n "${{ github.event.inputs.pppoe_password }}" ]]; then
+            echo "⚠️ 提示: 宽带账号或密码未填全。变量将照常推送，但系统将安全回退至 DHCP 模式。"
+          else
+            echo "✅ 未检测到宽带配置，将默认使用 DHCP。"
           fi
       
       - name: Enable Store integration
@@ -106,14 +98,12 @@ jobs:
             -v "${{ github.workspace }}/x86-64/build25.sh:/home/build/immortalwrt/build.sh" \
             -e ROOTFS_SIZE=$ROOTFS_SIZE \
             -e INCLUDE_DOCKER=$INCLUDE_DOCKER \
-            -e ENABLE_PPPOE=${{ inputs.enable_pppoe }} \
-            -e PPPOE_ACCOUNT=${{ inputs.pppoe_account }} \
-            -e PPPOE_PASSWORD=${{ inputs.pppoe_password }} \
+            -e PPPOE_ACCOUNT="${{ github.event.inputs.pppoe_account }}" \
+            -e PPPOE_PASSWORD="${{ github.event.inputs.pppoe_password }}" \
             immortalwrt/imagebuilder:x86-64-openwrt-${LUCI_VERSION} /bin/bash /home/build/immortalwrt/build.sh
           
       - name: Generate Smart Release Notes
         run: |
-          # 动态判断特性状态生成对应文案
           DOCKER_STATUS="❎ 未集成"
           if [ "${{ github.event.inputs.include_docker }}" == "yes" ]; then
             DOCKER_STATUS="✅ 已集成 (**包含全自动网络互通与防火墙转发规则**)"
@@ -124,15 +114,21 @@ jobs:
             STORE_STATUS="✅ 已集成"
           fi
 
+          # 智能判断网络状态文案 (加入降级提示)
           WAN_STATUS="🔌 DHCP / 静态 IP"
-          if [ "${{ github.event.inputs.enable_pppoe }}" == "yes" ]; then
+          PPPOE_NOTE="*(未启用自动拨号功能)*"
+          if [[ -n "${{ github.event.inputs.pppoe_account }}" && -n "${{ github.event.inputs.pppoe_password }}" ]]; then
             WAN_STATUS="📝 PPPoE (**开机全自动注入账号密码并拨号**)"
+            PPPOE_NOTE="自动将你填写的宽带账号密码写入 WAN 口并拨号。"
+          elif [[ -n "${{ github.event.inputs.pppoe_account }}" || -n "${{ github.event.inputs.pppoe_password }}" ]]; then
+            WAN_STATUS="🔌 DHCP / 静态 IP (**⚠️ 宽带配置不全，已放弃 PPPoE**)"
+            PPPOE_NOTE="*(检测到不完整的宽带信息，防呆机制触发，已安全回退至 DHCP 模式)*"
           fi
 
           cat > ${{ github.workspace }}/router-info.md <<EOF
           # 🚀 ImmortalWrt x86-64 高级定制固件
           
-          > 本固件由 GitHub Actions 驱动 `ImageBuilder` 全自动构建，专为 x86-64 物理机与虚拟机优化。
+          > 本固件由 GitHub Actions 驱动 \`ImageBuilder\` 全自动构建，专为 x86-64 物理机与虚拟机优化。
           
           ## 📡 路由器后台与网络
           - 🏠 **管理地址**: \`${{ github.event.inputs.custom_router_ip }}\`
@@ -147,9 +143,9 @@ jobs:
           - 🛡️ **科学插件**: 已预置 \`luci-app-openclash\` 及对应的 Meta 内核。
           
           ## 💡 开机自动化说明 (无痕部署)
-          本固件内置了 \`99-init-settings\` 启动脚本，**首次开机时会自动执行以下操作，并在执行完毕后自我销毁**，不留垃圾文件：
-          1. 自动绑定你指定的 LAN 口 IP。
-          2. $( [ "${{ github.event.inputs.enable_pppoe }}" == "yes" ] && echo "自动将你填写的宽带账号密码写入 WAN 口。" || echo "*(未启用自动拨号功能)*" )
+          本固件内置了 \`99-init-settings\` 启动脚本，**首次开机时会自动执行以下操作，并在执行完毕后自我销毁**，保持系统纯净：
+          1. 自动绑定指定的 LAN 口 IP。
+          2. $PPPOE_NOTE
           3. $( [ "${{ github.event.inputs.include_docker }}" == "yes" ] && echo "自动注册 Docker 虚拟网卡，并在防火墙中打通 LAN与Docker 的双向访问、允许 Docker 容器直连外网拉取镜像。" || echo "*(未启用 Docker 自动化配置)*" )
 
           ---
