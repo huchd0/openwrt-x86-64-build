@@ -42,19 +42,22 @@ jobs:
 
       - name: 🚀 运行 Docker ImageBuilder 容器
         run: |
-          # 拼接 Docker 镜像名称 (使用用户验证过的命名规则)
           DOCKER_IMAGE="immortalwrt/imagebuilder:x86-64-openwrt-${{ inputs.openwrt_version }}"
           echo ">>> 正在拉取官方构建镜像: $DOCKER_IMAGE"
           docker pull "$DOCKER_IMAGE"
           
           echo ">>> 启动容器并在无尘环境中执行编译..."
-          # 挂载当前工作目录到容器，传入环境变量并执行脚本
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -e ROOTFS_SIZE=${{ inputs.profile }} \
             -e MANAGEMENT_IP=${{ inputs.custom_ip }} \
             "$DOCKER_IMAGE" \
-            /bin/bash -c "cp /workspace/x86-64/build_ImmortalWrt_mix.sh . && ./build_ImmortalWrt_mix.sh && cp bin/targets/x86/64/*combined-efi.img.gz /workspace/output-firmware/ 2>/dev/null || true"
+            /bin/bash -c "cp /workspace/x86-64/build_ImmortalWrt_mix.sh . && \
+            ./build_ImmortalWrt_mix.sh && \
+            echo '>>> 编译完成，正在列出生成的文件清单：' && \
+            ls -lh bin/targets/x86/64/ && \
+            cp bin/targets/x86/64/*.img.gz /workspace/output-firmware/ 2>/dev/null || true && \
+            cp bin/targets/x86/64/sha256sums /workspace/output-firmware/ 2>/dev/null || true"
 
       - name: 发布到 Releases
         uses: softprops/action-gh-release@v2
