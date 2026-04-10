@@ -1,4 +1,4 @@
-name: build-x86-64-immortalwrt-25.12.x
+name: immortalwrt-build-x86-64
 # 初版 暂时只能集成仓库内的软件 包括iStore商店等第三方软件等待后续开发
 on:
   workflow_dispatch:
