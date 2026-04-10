@@ -1,7 +1,7 @@
 #!/bin/bash
 # 查询固件是否在这存在：https://hub.docker.com/r/immortalwrt/imagebuilder/tags
 # 界面填写 设备架构arch，如：ASUS 4G-AX56 使用的是 Mediatek MT7621 芯片，所以你的 arch 应该填 ramips-mt7621。
-# 界面填写 设备Profile，如：afoundry_ew1200，查询方式临时使本页代码最后一行生效运行，禁用执行构建。
+# 界面填写 设备Profile，如：afoundry_ew1200，查询方式--->>>禁用执行构建后，临时使本页代码最后一行生效运行。
 set -e
 
 # 1. 自动识别架构下载 OpenClash 内核
@@ -61,6 +61,6 @@ coreutils-nohup block-mount kmod-fs-ext4"
 make image PROFILE="$DEVICE_PROFILE" PACKAGES="$PKGS" FILES="files"
 
 # 禁掉上面的执行构建语句，执行下面语句make info，第四步Run Builder的时候，
-#中间有一行Available Profiles:下面，有很多路由器信息块，
-#第一行冒號左側的字符串（例如 xiaomi_mi-router-4g）就是界面中要填入 device_profile 輸入框的值
+# 中间有一行Available Profiles:下面，有很多路由器信息块，
+# 第一行冒號左側的字符串（例如 xiaomi_mi-router-4g）就是界面中要填入 device_profile 輸入框的值
 # make info
