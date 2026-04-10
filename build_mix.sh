@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# 接收 GitHub Actions 传来的环境变量
+# 接收 GitHub Actions 传来的环境变量 (支持本地独立运行时的默认值)
 ROOTFS_SIZE=${ROOTFS_SIZE:-1024}
 MANAGEMENT_IP=${MANAGEMENT_IP:-192.168.100.1}
 
@@ -58,7 +58,7 @@ uci delete network.@device[0].ports 2>/dev/null
 uci set network.lan.device='br-lan'
 uci delete network.lan.type 2>/dev/null
 
-# --- 新增：系统基础设置 (时区与主机名) ---
+# --- 系统基础设置 (时区与主机名) ---
 uci set system.@system[0].timezone='CST-8'
 uci set system.@system[0].zonename='Asia/Shanghai'
 uci set system.@system[0].hostname='Tanxmix'
@@ -88,22 +88,34 @@ else
 fi
 uci commit network
 
-# --- C. 智能大分区挂载保护 (为后续手动装 Docker 铺路) ---
-TARGET_UUID="e621dbaa-2a9b-4319-9ebd-4f4f6e47ce50"
-if blkid | grep -q "\$TARGET_UUID"; then
-    echo "config 'global'" > /etc/config/fstab
-    echo "  option  anon_swap   '0'" >> /etc/config/fstab
-    echo "  option  anon_mount  '0'" >> /etc/config/fstab
-    echo "  option  auto_swap   '1'" >> /etc/config/fstab
-    echo "  option  auto_mount  '1'" >> /etc/config/fstab
-    echo "  option  delay_root  '5'" >> /etc/config/fstab
-    echo "  option  check_fs    '0'" >> /etc/config/fstab
+# --- C. 智能大分区挂载保护 (动态抓取 UUID) ---
+# 兼容 NVMe 和常规 SATA/USB 存储，寻找第三个分区
+TARGET_DEV=""
+if [ -b "/dev/nvme0n1p3" ]; then
+    TARGET_DEV="/dev/nvme0n1p3"
+elif [ -b "/dev/sda3" ]; then
+    TARGET_DEV="/dev/sda3"
+fi
+
+if [ -n "\$TARGET_DEV" ]; then
+    # 动态获取该分区的真实 UUID
+    TARGET_UUID=\$(blkid -s UUID -o value "\$TARGET_DEV")
     
-    uci add fstab mount
-    uci set fstab.@mount[-1].uuid="\$TARGET_UUID"
-    uci set fstab.@mount[-1].target='/mnt/sda3'
-    uci set fstab.@mount[-1].enabled='1'
-    uci commit fstab
+    if [ -n "\$TARGET_UUID" ]; then
+        echo "config 'global'" > /etc/config/fstab
+        echo "  option  anon_swap   '0'" >> /etc/config/fstab
+        echo "  option  anon_mount  '0'" >> /etc/config/fstab
+        echo "  option  auto_swap   '1'" >> /etc/config/fstab
+        echo "  option  auto_mount  '1'" >> /etc/config/fstab
+        echo "  option  delay_root  '5'" >> /etc/config/fstab
+        echo "  option  check_fs    '0'" >> /etc/config/fstab
+        
+        uci add fstab mount
+        uci set fstab.@mount[-1].uuid="\$TARGET_UUID"
+        uci set fstab.@mount[-1].target='/mnt/sda3'
+        uci set fstab.@mount[-1].enabled='1'
+        uci commit fstab
+    fi
 fi
 
 # --- D. 软件源与插件安装 ---
@@ -120,13 +132,14 @@ EOF
 chmod +x files/etc/uci-defaults/99-custom-setup
 
 echo ">>> 5. 配置官方软件列表 (纯净极简版) <<<"
+# 追加了 e2fsprogs 以支持 mkfs.ext4 和 resize2fs (为 Docker 分区做准备)
 PACKAGES="-dnsmasq dnsmasq-full \
 luci luci-base luci-compat luci-i18n-base-zh-cn \
 luci-i18n-firewall-zh-cn \
 luci-i18n-package-manager-zh-cn \
 luci-app-ttyd luci-i18n-ttyd-zh-cn \
 luci-app-ksmbd luci-i18n-ksmbd-zh-cn \
-block-mount blkid lsblk parted fdisk \
+block-mount blkid lsblk parted fdisk e2fsprogs \
 kmod-usb-storage kmod-usb-storage-uas kmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-vfat \
 coreutils-nohup bash curl ca-bundle ip-full iptables-mod-tproxy iptables-mod-extra \
 libcap libcap-bin ruby ruby-yaml kmod-tun kmod-inet-diag unzip kmod-nft-tproxy kmod-igc iwinfo"
