@@ -1,20 +1,18 @@
 name: ImmortalWrt-x86-64-mix
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   workflow_dispatch:
     inputs:
       openwrt_version:
-        description: '选择版本 (Auto 自动抓取最新)'
+        description: '选择版本 (Auto 自动抓取稳定版)'
         required: true
         default: 'Auto'
         type: choice
         options:
           - 'Auto'
-          - '25.12.0-rc1'
-          - '24.10.5'
+          - '24.10.0'
+          - '23.05.4'
+          - '23.05.3'
       profile:
         description: 'RootFS 分区大小 (MB)'
         required: true
@@ -34,45 +32,53 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
-      - name: 🌟 智能版本号解析与路径探测
+      - name: 🔍 智能探测可用下载地址
         id: probe_url
         run: |
-          # 1. 确定基础版本号
+          # 定义备用版本（如果 Auto 失败，回退到此）
+          FALLBACK_VER="23.05.4"
+          
           if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
             VERSION=$(curl -s "https://api.github.com/repos/immortalwrt/immortalwrt/releases" | jq -r '.[0].tag_name' | sed 's/v//')
           else
             VERSION="${{ inputs.openwrt_version }}"
           fi
-          
-          echo "目标版本: $VERSION"
 
-          # 2. 构造可能的下载 URL 列表 (有些 RC 版在路径里不带 -rc1)
-          URL_1="https://downloads.immortalwrt.org/releases/${VERSION}/targets/x86/64/immortalwrt-imagebuilder-${VERSION}-x86-64.Linux-x86_64.tar.xz"
-          VERSION_SHORT=$(echo $VERSION | cut -d'-' -f1)
-          URL_2="https://downloads.immortalwrt.org/releases/${VERSION}/targets/x86/64/immortalwrt-imagebuilder-${VERSION_SHORT}-x86-64.Linux-x86_64.tar.xz"
-          
-          # 3. 探测合法的 URL
-          SELECTED_URL=""
-          if wget --spider -q "$URL_1"; then
-            SELECTED_URL="$URL_1"
-          elif wget --spider -q "$URL_2"; then
-            SELECTED_URL="$URL_2"
+          echo "正在检测版本: $VERSION"
+
+          # 定义检测函数
+          check_url() {
+            local ver=$1
+            local url="https://downloads.immortalwrt.org/releases/${ver}/targets/x86/64/immortalwrt-imagebuilder-${ver}-x86-64.Linux-x86_64.tar.xz"
+            if wget --spider -q "$url"; then
+              echo "$url"
+            else
+              echo ""
+            fi
+          }
+
+          # 尝试下载
+          IB_URL=$(check_url "$VERSION")
+
+          if [ -z "$IB_URL" ]; then
+            echo "⚠️ 警告: $VERSION 暂时没有 ImageBuilder 文件，正在尝试回退到稳定版 $FALLBACK_VER"
+            IB_URL=$(check_url "$FALLBACK_VER")
+            VERSION="$FALLBACK_VER"
           fi
 
-          if [ -n "$SELECTED_URL" ]; then
-            echo "✅ 找到有效下载地址: $SELECTED_URL"
-            echo "IB_URL=$SELECTED_URL" >> $GITHUB_ENV
+          if [ -n "$IB_URL" ]; then
+            echo "✅ 最终确定下载地址: $IB_URL"
+            echo "IB_URL=$IB_URL" >> $GITHUB_ENV
             echo "OWRT_VERSION=$VERSION" >> $GITHUB_ENV
           else
-            echo "❌ 严重错误: 无法在官方下载站找到 $VERSION 的 ImageBuilder 文件！"
-            echo "请访问 https://downloads.immortalwrt.org/releases/ 确认版本号是否存在。"
+            echo "❌ 严重错误: 连回退版本也无法下载！请检查网络或官方站点。"
             exit 1
           fi
 
       - name: 安装依赖
-        run: sudo apt-get update && sudo apt-get install -y build-essential libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip bzip2 patch python3 findutils zstd jq
+        run: sudo apt-get update && sudo apt-get install -y build-essential gawk git wget unzip python3 jq
 
-      - name: 下载并解压 ImageBuilder
+      - name: 下载并解压
         run: |
           wget -q "${{ env.IB_URL }}"
           tar -xf *.tar.xz
