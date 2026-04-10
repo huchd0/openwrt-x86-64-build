@@ -125,7 +125,7 @@ jobs:
           fi
 
           cat > ${{ github.workspace }}/router-info.md <<EOF
-          # 🚀 ImmortalWrt x86-64 高级定制固件
+          ## 🚀 ImmortalWrt x86-64 高级定制固件
           
           > 本固件由 GitHub Actions 驱动 \`ImageBuilder\` 全自动构建，专为 x86-64 物理机与虚拟机优化。
           
@@ -133,11 +133,10 @@ jobs:
           - 🏠 **管理地址**: \`${{ github.event.inputs.custom_router_ip }}\`
           - 👤 **默认账户**: \`root\`
           - 🔑 **默认密码**: *(无，请在初始设置时修改)*
-          - 🌐 **上网方式**: $WAN_STATUS
           
           ## ⚙️ 核心固件特性
           - 💾 **RootFS 分区大小**: \`${{ github.event.inputs.rootfs_size }} MB\`
-          - 🐳 **Docker 引擎**: $DOCKER_STATUS
+          - 🐳 **Docker **: $DOCKER_STATUS
           - 🛍️ **iStore 商店**: $STORE_STATUS
           - 🛡️ **科学插件**: 已预置 \`luci-app-openclash\` 及对应的 Meta 内核。
           
@@ -146,20 +145,13 @@ jobs:
           1. 自动绑定指定的 LAN 口 IP。
           2. $PPPOE_NOTE
           3. $( [ "${{ github.event.inputs.include_docker }}" == "yes" ] && echo "自动注册 Docker 虚拟网卡，并在防火墙中打通 LAN与Docker 的双向访问、允许 Docker 容器直连外网拉取镜像。" || echo "*(未启用 Docker 自动化配置)*" )
-
-          ---
-          <div align="center">
-            <a href="https://yishijie.gitlab.io/ziyuan">
-              <img src="https://img.shields.io/badge/若下载慢可套用国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge"/>
-            </a>
-          </div>
           EOF
 
       - name: Upload ImmortWrt as release assets
         uses: softprops/action-gh-release@v2.4.1
         with:
           tag_name: Build-${{ env.DATE }}
-          name: 🚀 ImmortalWrt x86-64 (构建于 ${{ env.DATE }})
+          name: ImmortalWrt x86-64 (构建于 ${{ env.DATE }})
           body_path: ${{ github.workspace }}/router-info.md
           files: |
             ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi.img.gz
