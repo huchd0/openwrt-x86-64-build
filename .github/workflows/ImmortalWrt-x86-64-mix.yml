@@ -31,10 +31,10 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
-      - name: 🐳 准备 Docker 构建目录
+      - name: 🐳 准备构建环境
         run: |
-          # 创建用于接收编译结果的宿主机文件夹
-          mkdir -p output-firmware
+          # 提前在 GitHub 宿主机上建好你代码里需要的目录
+          mkdir -p ${{ github.workspace }}/bin/targets/x86/64/
           
           # 修复脚本换行符并赋予权限
           sed -i 's/\r$//' x86-64/build_ImmortalWrt_mix.sh
@@ -54,16 +54,17 @@ jobs:
             "$DOCKER_IMAGE" \
             /bin/bash -c "cp /workspace/x86-64/build_ImmortalWrt_mix.sh . && \
             ./build_ImmortalWrt_mix.sh && \
-            echo '>>> 编译完成，正在列出生成的文件清单：' && \
-            ls -lh bin/targets/x86/64/ && \
-            cp bin/targets/x86/64/*.img.gz /workspace/output-firmware/ 2>/dev/null || true && \
-            cp bin/targets/x86/64/sha256sums /workspace/output-firmware/ 2>/dev/null || true"
+            echo '>>> 编译成功！正在将固件移交回 GitHub 宿主机...' && \
+            cp -r bin/targets/x86/64/* /workspace/bin/targets/x86/64/ 2>/dev/null || true"
 
-      - name: 发布到 Releases
-        uses: softprops/action-gh-release@v2
+      - name: 📦 Upload ImmortalWrt as release assets
+        uses: softprops/action-gh-release@v2.4.1
         with:
           tag_name: ${{ inputs.openwrt_version }}-${{ github.run_id }}
           name: ImmortalWrt ${{ inputs.openwrt_version }} [${{ inputs.custom_ip }}]
-          files: output-firmware/*
+          # 这里完美使用了你提供的提取路径和通配符
+          files: |
+            ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi.img.gz
+            ${{ github.workspace }}/bin/targets/x86/64/sha256sums
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
