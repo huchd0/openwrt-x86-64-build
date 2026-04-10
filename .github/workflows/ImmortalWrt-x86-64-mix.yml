@@ -7,10 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       openwrt_version:
-        description: 'ImmortalWrt 版本(latest智能选择最新稳定版)'
+        description: '选择 ImmortalWrt 版本 (Auto 为自动拉取最新版)'
         required: true
-        default: 'latest'
-        type: string # 改为 string 方便手动输入
+        default: 'Auto'
+        type: choice
+        options:
+          - 'Auto'
+          - '25.12.0-rc1'
+          - '24.10.5'
       profile:
         description: 'RootFS 分区大小 (单位: MB)'
         required: true
@@ -30,11 +34,18 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
-      - name: 🌟 智能获取 ImmortalWrt 版本号
+      - name: 🌟 智能获取版本号
         id: get_version
         run: |
-          if [ "${{ inputs.openwrt_version }}" == "latest" ]; then
-            LATEST_VER=$(curl -s "https://api.github.com/repos/immortalwrt/immortalwrt/releases" | grep '"tag_name":' | grep -v 'rc' | head -n 1 | cut -d '"' -f 4 | sed 's/v//')
+          if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
+            echo "正在查询 ImmortalWrt 最新稳定版或 RC 版..."
+            # 获取最新 release 标签，过滤掉没有 tag 的空行
+            LATEST_VER=$(curl -s "https://api.github.com/repos/immortalwrt/immortalwrt/releases" | jq -r '.[0].tag_name' | sed 's/v//')
+            if [ -z "$LATEST_VER" ] || [ "$LATEST_VER" == "null" ]; then
+              echo "API 抓取失败，回退到默认版本 24.10.5"
+              LATEST_VER="24.10.5"
+            fi
+            echo "🎉 自动获取到最新版本: $LATEST_VER"
             echo "OWRT_VERSION=$LATEST_VER" >> $GITHUB_ENV
           else
             echo "OWRT_VERSION=${{ inputs.openwrt_version }}" >> $GITHUB_ENV
@@ -43,23 +54,29 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip bzip2 patch python3 findutils zstd
+          sudo apt-get install -y build-essential libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip bzip2 patch python3 findutils zstd jq
 
       - name: 下载并解压 ImageBuilder
         run: |
-          # 动态拼接 ImmortalWrt 的下载地址
+          # 动态拼接并检测下载地址
           IB_URL="https://downloads.immortalwrt.org/releases/${{ env.OWRT_VERSION }}/targets/x86/64/immortalwrt-imagebuilder-${{ env.OWRT_VERSION }}-x86-64.Linux-x86_64.tar.xz"
-          echo ">>> 正在下载: $IB_URL"
-          wget -q "$IB_URL" || (echo "下载失败，请检查版本号是否正确" && exit 1)
-          tar -xf *.tar.xz
-          mv immortalwrt-imagebuilder-* imagebuilder
+          echo ">>> 正在尝试下载: $IB_URL"
+          
+          if wget --spider -q "$IB_URL"; then
+            wget -q "$IB_URL"
+            tar -xf *.tar.xz
+            mv immortalwrt-imagebuilder-* imagebuilder
+          else
+            echo "❌ 错误：版本 ${{ env.OWRT_VERSION }} 的下载地址不存在！"
+            echo "请确认该版本是否有 ImageBuilder 释出。"
+            exit 1
+          fi
 
       - name: 运行定制脚本
         env:
           ROOTFS_SIZE: ${{ inputs.profile }}
           MANAGEMENT_IP: ${{ inputs.custom_ip }}
         run: |
-          # 确保脚本存在并赋予权限
           sed -i 's/\r$//' x86-64/build251.sh
           chmod +x x86-64/build251.sh
           cp x86-64/build251.sh imagebuilder/
@@ -69,13 +86,8 @@ jobs:
       - name: 发布到 Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.release_tag }}-${{ env.OWRT_VERSION }}
+          tag_name: ${{ env.OWRT_VERSION }}-${{ github.run_id }}
           name: ImmortalWrt ${{ env.OWRT_VERSION }} [${{ inputs.custom_ip }}]
           files: imagebuilder/output-firmware/*
-          body: |
-            **🎉 ImmortalWrt ${{ env.OWRT_VERSION }} 定制版**
-            - 🏠 管理地址: `http://${{ inputs.custom_ip }}`
-            - 🚀 插件: OpenClash (Meta Core), Argon Theme
-            - 📊 存储: 自动挂载 sda3 扩展分区
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
