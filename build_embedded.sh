@@ -52,10 +52,20 @@ chmod +x files/etc/uci-defaults/99-custom-setup
 # 把不用的（比如蓝牙驱动、USB 驱动）统统加个 - 减掉
 # 不要减掉 luci字样的核心包
 PKGS="-dnsmasq \
-luci luci-base luci-compat luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn \
-bash jq curl ca-bundle luci-app-ttyd luci-i18n-ttyd-zh-cn \
-luci-app-statistics luci-i18n-statistics-zh-cn \
-coreutils-nohup block-mount kmod-fs-ext4"
+# 1. 必须剔除 dnsmasq (与 OpenClash 冲突)
+# 2. 剔除所有不必要的硬件驱动和大型组件
+# 3. 只保留最核心的插件
+PKGS="-dnsmasq \
+-ppp -ppp-mod-pppoe \
+-kmod-usb-core -kmod-usb3 -kmod-usb-ledtrig-usbport \
+-kmod-usb-storage -kmod-usb-storage-uas \
+-kmod-fs-autofs4 -kmod-fs-msdos -kmod-fs-vfat \
+-kmod-nft-offload \
+dnsmasq-full \
+luci-app-openclash \
+luci-app-ttyd \
+luci-i18n-ttyd-zh-cn \
+luci-inline-statistics" # 用轻量级的替代原有的 statistics
 
 # 6. 执行构建
 make image PROFILE="$DEVICE_PROFILE" PACKAGES="$PKGS" FILES="files"
