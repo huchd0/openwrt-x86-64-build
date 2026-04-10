@@ -77,16 +77,16 @@ jobs:
           MANAGEMENT_IP: '192.168.100.1'
         run: |
           # 🌟 核心防护：抹除 Windows 换行符
-          sed -i 's/\r$//' build.sh
+          sed -i 's/\r$//' build_mix.sh
           
-          chmod +x build.sh
-          cp build.sh imagebuilder/
+          chmod +x build_mix.sh
+          cp build_mix.sh imagebuilder/
           cd imagebuilder
           
           # 双重防护
-          sed -i 's/\r$//' build.sh
+          sed -i 's/\r$//' build_mix.sh
           
-          ./build.sh
+          ./build_mix.sh
 
       - name: 生成发布标签
         if: steps.check_version.outputs.SHOULD_BUILD == 'true'
