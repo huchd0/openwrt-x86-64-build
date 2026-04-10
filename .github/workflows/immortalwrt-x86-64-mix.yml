@@ -40,11 +40,9 @@ jobs:
           if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
             echo ">>> 正在自动抓取 Docker Hub 上最新的 ImmortalWrt 镜像标签..."
             
-            # 核心拦截逻辑：抓取前 100 个历史标签，剔除 SNAPSHOT 以及带 25.12 的开发版
-            # 取过滤后排在第一位的版本（必然是最新出炉的 24.x 稳定版或 RC 版）
-            LATEST_TAG=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' | grep "x86-64-openwrt-" | grep -v -E "SNAPSHOT|25\.12" | head -n 1 | sed 's/x86-64-openwrt-//')
+            # 🎯 杀手锏更新：在 API 网址末尾加入 &name=x86-64-openwrt- 进行服务端精准过滤
+            LATEST_TAG=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=x86-64-openwrt-" | jq -r '.results[].name' | grep -v -E "SNAPSHOT|25\.12" | head -n 1 | sed 's/x86-64-openwrt-//')
             
-            # 去除保底机制：如果没抓到，直接中断报错，宁死不屈
             if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" == "null" ]; then
               echo "❌ 致命错误：未能从 Docker Hub 获取到有效的版本号！工作流中止。"
               exit 1
