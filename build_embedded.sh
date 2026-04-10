@@ -1,12 +1,7 @@
 #!/bin/bash
 # 查询固件是否在这存在：https://hub.docker.com/r/immortalwrt/imagebuilder/tags
-# 界面填写 设备架构arch，如：ramips-mt7621
+# 界面填写 设备架构arch，如：ASUS 4G-AX56 使用的是 Mediatek MT7621 芯片，所以你的 arch 应该填 ramips-mt7621。
 # 界面填写 设备Profile，如：afoundry_ew1200，查询方式临时使本页代码最后一行生效运行，禁用执行构建。
-
-注：ASUS 4G-AX56 使用的是 Mediatek MT7621 芯片，所以你的 arch 应该填 ramips-mt7621。
-
-填写 Profile：
-在 device_profile 输入框填入：asus_4g-ax56。
 set -e
 
 # 1. 自动识别架构下载 OpenClash 内核
