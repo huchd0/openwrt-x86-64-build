@@ -194,7 +194,7 @@ EOF
 fi
 
 # ==========================================
-# 🎯 5. 双重交叉过滤与精美排版
+# 🎯 5. 双重交叉过滤与大字报摘要输出
 # ==========================================
 RESULT="$ALL_LIST"
 [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B" || true)
@@ -202,10 +202,20 @@ RESULT="$ALL_LIST"
 
 if [ -z "$RESULT" ]; then
   echo "❌ 匹配失败：数据库中未找到符合条件的设备。"
-  echo "💡 建议检查拼写，或尝试留空一个搜索框扩大检索范围。"
+  
+  # 【输出到 GitHub 首页摘要】
+  echo "### ❌ 匹配失败" >> $GITHUB_STEP_SUMMARY
+  echo "数据库中未找到符合条件的设备。建议检查拼写，或放宽搜索范围。" >> $GITHUB_STEP_SUMMARY
 else
   echo "✅ 匹配成功！为您精准锁定以下组合："
   echo -e "======================================================="
-  echo "$RESULT" | awk -F ':' '{printf "%-25s : %s\n", $1, $2}' | sort
+  FORMATTED_RESULT=$(echo "$RESULT" | awk -F ':' '{printf "%-25s : %s\n", $1, $2}' | sort)
+  echo "$FORMATTED_RESULT"
   echo -e "======================================================="
+  
+  # 【核心黑科技：输出到 GitHub 首页摘要】
+  echo "### ✅ 匹配成功！精准锁定以下组合：" >> $GITHUB_STEP_SUMMARY
+  echo '```text' >> $GITHUB_STEP_SUMMARY
+  echo "$FORMATTED_RESULT" >> $GITHUB_STEP_SUMMARY
+  echo '```' >> $GITHUB_STEP_SUMMARY
 fi
