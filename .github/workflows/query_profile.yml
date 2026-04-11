@@ -1,22 +1,22 @@
-name: 🔍 Query-Device-Profile (全能设备查询)
+name: 🔍 Query-Device-Profile (三填一全网检索引擎)
 
 on:
   workflow_dispatch:
     inputs:
       arch:
-        description: '1. 设备架构 (必选，决定搜索范围)'
-        required: true
-        default: 'mediatek-filogic'
+        description: '1. 设备架构 (非必填。留空则跨全架构检索)'
+        required: false
+        default: ''
       brand:
-        description: '2. 品牌 (支持中文/别名/带空格词汇)'
+        description: '2. 品牌 (非必填。支持中文别名)'
         required: false
         default: ''
       model:
-        description: '3. 型号/绰号 (支持中文/代号/带空格词汇)'
+        description: '3. 型号/绰号 (非必填。支持中文别名)'
         required: false
         default: ''
       openwrt_version:
-        description: '选择版本 (Auto 抓取最新)'
+        description: '选择版本 (Auto 将自动追踪最新版)'
         required: false
         default: 'Auto'
         type: choice
@@ -29,32 +29,47 @@ jobs:
   query:
     runs-on: ubuntu-22.04
     steps:
-      - name: 🔍 解析版本
+      - name: 🔍 解析核心版本
         id: vars
         run: |
-          ARCH="${{ inputs.arch }}"
           if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
-            LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=$ARCH-openwrt-" | \
-              jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sort -V | tail -n 1 | sed "s/$ARCH-openwrt-//")
+            # 精准抓取 Docker Hub 上当前最新的稳定版版本号
+            LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "openwrt-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sed -E 's/.*openwrt-//' | sort -V | tail -n 1)
             [ -z "$LATEST" ] || [ "$LATEST" == "null" ] && LATEST="24.10.5"
             echo "VERSION=$LATEST" >> $GITHUB_ENV
           else
             echo "VERSION=${{ inputs.openwrt_version }}" >> $GITHUB_ENV
           fi
 
-      - name: 📋 双字典智能匹配引擎 (防空格打断版)
+      - name: 📋 三填一引擎 (云端 API 直连极速版)
         run: |
-          echo ">>> 目标环境: ${{ inputs.arch }} | ${{ env.VERSION }}"
+          echo ">>> 目标环境版本: ${{ env.VERSION }}"
           echo -e "=======================================================\n"
+          
+          # ==========================================
+          # 📝 1. 净化与【三填一】防呆逻辑
+          # ==========================================
+          trim() {
+            local s="$1"
+            s="${s#"${s%%[![:space:]]*}"}"
+            s="${s%"${s##*[![:space:]]}"}"
+            echo "$s"
+          }
 
+          RAW_ARCH=$(trim "${{ inputs.arch }}")
+          RAW_BRAND=$(trim "${{ inputs.brand }}")
+          RAW_MODEL=$(trim "${{ inputs.model }}")
+          
+          if [ -z "$RAW_ARCH" ] && [ -z "$RAW_BRAND" ] && [ -z "$RAW_MODEL" ]; then
+             echo "❌ 触发防呆拦截：架构、品牌、型号不能全部为空！"
+             echo "💡 请至少填写一项线索（执行“三填一”底线规则）。"
+             exit 1
+          fi
+          
           # ==========================================
-          # 规则：别名之间用 | 隔开，括号中间的词是 (英文代号)
-          # 举例：即使写成 "mi router|小米"，引擎也能完美识别 "mi router"
-          # ==========================================
-          # 📝 1. 品牌字典 (Brand Dict)
+          # 📝 2. 品牌与型号双字典配置
           # ==========================================
           BRAND_DICT="
-          # --- 主流零售品牌 ---
           小米|mi               (xiaomi)
           红米                  (redmi)
           华硕|败家之眼|asus    (asus)
@@ -68,8 +83,6 @@ jobs:
           友讯|dlink            (dlink)
           华三|h3c              (h3c)
           锐捷|ruijie           (ruijie)
-          
-          # --- 矿渣/运营商定制/开源品牌 ---
           京东云|jd|无线宝      (jdcloud)
           斐讯|phicomm          (phicomm)
           新路由|newifi|dteam   (newifi|d-team)
@@ -82,45 +95,30 @@ jobs:
           迅雷|网心云|赚钱宝    (xunlei|onething|thunder)
           "
           
-          # ==========================================
-          # 📝 2. 型号字典 (Model Dict)
-          # 规则：即使字典找不到，引擎也会原样拿去模糊搜索！
-          # ==========================================
           MODEL_DICT="
-          # --- 京东云系列 ---
           一代|1代|cp01         (re-cp-01)
           二代|2代|sp01b        (re-sp-01b)
           亚瑟|ax1800pro        (ax1800-pro)
           雅典娜|ax6600         (ax6600)
           百里                  (ax6000)
           鲁班|cl01             (re-cl-01)
-          
-          # --- 斐讯经典神机 ---
           k2|k2经典             (k2)
           k2p|k2p神机           (k2p)
           k3|k3路由器           (k3)
           k3c                   (k3c)
-          
-          # --- 小米/红米热门系列 ---
           cr6606|cr6608|cr6609  (cr660x)
           wr30u|联通wr30u       (wr30u)
           ax3000t               (ax3000t)
           ax3600                (ax3600)
           ax9000                (ax9000)
-          
-          # --- 新路由系列 ---
           新路由1|y1|mini       (y1)
           新路由2|d1            (d1)
           新路由3|d2|newifi3    (d2)
-          
-          # --- ARM 软路由/开发板系列 ---
           r2s                   (nanopi-r2s)
           r4s                   (nanopi-r4s)
           r5s                   (nanopi-r5s)
           r5c                   (nanopi-r5c)
           r6s                   (nanopi-r6s)
-          
-          # --- 其他热门矿渣/高性价比神机 ---
           t7|360t7              (t7)
           q20|捷稀q20           (q20)
           rax3000m|移动rax3000m (rax3000m)
@@ -128,28 +126,8 @@ jobs:
           "
           
           # ==========================================
-          # ⚙️ 处理引擎 (双向净化版)
+          # ⚙️ 3. 核心翻译引擎
           # ==========================================
-          
-          # 1. 净化函数：彻底剔除字符串首尾的空格，但不影响中间的空格
-          trim() {
-            local s="$1"
-            s="${s#"${s%%[![:space:]]*}"}"
-            s="${s%"${s##*[![:space:]]}"}"
-            echo "$s"
-          }
-
-          # 2. 接收并净化用户输入 (哪怕用户输入 "   京东云   "，也能洗成 "京东云")
-          RAW_BRAND=$(trim "${{ inputs.brand }}")
-          RAW_MODEL=$(trim "${{ inputs.model }}")
-          
-          if [ -z "$RAW_BRAND" ] && [ -z "$RAW_MODEL" ]; then
-             echo "⚠️ 提示：品牌和型号输入均为空，正在为您列出该架构下所有可用设备："
-             docker run --rm immortalwrt/imagebuilder:${{ inputs.arch }}-openwrt-${{ env.VERSION }} make info | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1
-             exit 0
-          fi
-
-          # 3. 核心翻译函数 (支持任意空格、任意排版)
           translate() {
             local input="$1"
             local dict="$2"
@@ -157,44 +135,82 @@ jobs:
             
             while IFS= read -r line; do
               [[ ! "$line" =~ [^[:space:]] ]] && continue
-              
-              local target="(${line##*(}"      # 抓取最右侧括号内容
-              local aliases_str="${line%(*}"   # 抓取左侧别名部分
-              
+              local target="(${line##*(}"
+              local aliases_str="${line%(*}"
               IFS='|' read -ra ALIAS_ARRAY <<< "$aliases_str"
               for raw_alias in "${ALIAS_ARRAY[@]}"; do
-                # 调用净化函数：洗掉 | 左右因为手抖多敲的空格
                 local clean_alias=$(trim "$raw_alias")
-                
                 [ -n "$clean_alias" ] && output="${output//$clean_alias/$target}"
               done
             done <<< "$dict"
             echo "$output"
           }
 
-          # 4. 执行双字典翻译
           PARSED_BRAND=$(translate "$RAW_BRAND" "$BRAND_DICT")
           PARSED_MODEL=$(translate "$RAW_MODEL" "$MODEL_DICT")
           
-          # 5. 把内部剩下的正常空格（如 mi router）转换为正则模糊匹配
           QUERY_B="${PARSED_BRAND// /.*}"
           QUERY_M="${PARSED_MODEL// /.*}"
 
-          echo "🔍 引擎搜索指令：品牌[$QUERY_B] + 型号[$QUERY_M]"
-          echo -e "-------------------------------------------------------"
+          echo "🔍 引擎启动状态："
+          [ -n "$RAW_ARCH" ] && echo "   - 扫描范围: [特定架构 -> $RAW_ARCH]" || echo "   - 扫描范围: [全局跨架构云端盲搜]"
+          [ -n "$QUERY_B" ] && echo "   - 品牌锁定: [$QUERY_B]"
+          [ -n "$QUERY_M" ] && echo "   - 型号锁定: [$QUERY_M]"
+          echo -e "-------------------------------------------------------\n"
 
-          ALL_LIST=$(docker run --rm immortalwrt/imagebuilder:${{ inputs.arch }}-openwrt-${{ env.VERSION }} make info | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1)
+          # ==========================================
+          # 🚀 4. API 架构动态提取与并发查询
+          # ==========================================
+          if [ -z "$RAW_ARCH" ]; then
+            echo ">>> 正在连接云端，动态抓取全网架构节点池..."
+            # 过滤并提取当前版本所有的官方架构
+            ARCH_LIST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=openwrt-${VERSION}" | jq -r '.results[].name' | grep -E "\-openwrt-${VERSION}$" | sed "s/-openwrt-${VERSION}$//")
+            
+            if [ -z "$ARCH_LIST" ]; then
+                echo "❌ 无法获取架构列表。请稍后重试，或手动指定架构。"
+                exit 1
+            fi
+            echo ">>> 成功锁定 $(echo "$ARCH_LIST" | wc -w) 个独立架构，开始极速遍历..."
+          else
+            ARCH_LIST="$RAW_ARCH"
+          fi
+
+          ALL_LIST=""
           
+          for arch in $ARCH_LIST; do
+            # 自动进行路径转换 (如: ramips-mt7621 转换为 ramips/mt7621)
+            subpath=$(echo "$arch" | sed 's/-/\//')
+            URL="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${subpath}/profiles.json"
+            
+            # 直连官网下载服务器提取核心数据，过滤无设备的架构
+            PROFILES=$(curl -sL --max-time 3 "$URL" | jq -r '.profiles | keys[]' 2>/dev/null || true)
+            
+            if [ -n "$PROFILES" ]; then
+                for p in $PROFILES; do
+                    # 格式化拼接为: 架构 : 设备ID
+                    ALL_LIST="$ALL_LIST\n$arch : $p"
+                done
+            fi
+          done
+          
+          # 清除空行
+          ALL_LIST=$(echo -e "$ALL_LIST" | grep -v "^$")
+
+          # ==========================================
+          # 🎯 5. 双重交叉过滤与智能排版输出
+          # ==========================================
           RESULT="$ALL_LIST"
           [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B")
           [ -n "$QUERY_M" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_M")
 
           if [ -z "$RESULT" ]; then
-            echo "❌ 匹配失败：当前架构下不存在该设备。"
+            echo "❌ 匹配失败：在云端数据库中未找到符合条件的设备。"
+            echo "💡 建议检查拼写，或尝试留空一个搜索框扩大检索范围。"
           else
-            echo "✅ 匹配成功！以下是可用的精确 ID："
-            echo "$RESULT"
+            echo "✅ 匹配成功！以下是可供编译的精确组合："
+            echo -e "======================================================="
+            # 使用 awk 实现完美的冒号左右左对齐排版
+            echo "$RESULT" | awk -F ':' '{printf "%-25s : %s\n", $1, $2}'
+            echo -e "======================================================="
+            echo "👆 请将冒号左侧填入主编译脚本的 Arch，右侧填入 Device Profile。"
           fi
-          
-          echo -e "======================================================="
-          echo "👆 请复制上述精确 ID 用于主构建流程的 device_profile 输入框。"
