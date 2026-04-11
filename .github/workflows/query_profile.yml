@@ -106,11 +106,11 @@ jobs:
           "
           
           MODEL_DICT="
-          一代|1代|cp01         (re-cp-01)
-          二代|2代|sp01b        (re-sp-01b)
-          亚瑟|ax1800pro        (ax1800-pro)
-          雅典娜|ax6600         (ax6600)
-          百里                  (ax6000)
+          一代|1代|坐享其成|sp01b   (re-sp-01b)
+          鲁班|2代|二代|cp02        (re-cp-02)
+          亚瑟|ax1800pro|cp03       (re-cp-03)
+          雅典娜|ax6600             (ax6600)
+          百里                      (ax6000)
           鲁班|cl01             (re-cl-01)
           k2|k2经典             (k2)
           k2p|k2p神机           (k2p)
