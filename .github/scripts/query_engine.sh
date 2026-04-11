@@ -209,11 +209,15 @@ if [ -z "$RESULT" ]; then
 else
   echo "✅ 匹配成功！为您精准锁定以下组合："
   echo -e "======================================================="
-  echo "$RESULT" | awk -F ' : ' '{printf "%-18s:%s\n", $1, $2}' | sort
+  
+  # 【核心修复】：把完美的 18 字符排版结果存入变量！
+  FORMATTED_RESULT=$(echo "$RESULT" | awk -F ' : ' '{printf "%-18s:%s\n", $1, $2}' | sort)
+  
+  # 1. 输出到黑框日志
   echo "$FORMATTED_RESULT"
   echo -e "======================================================="
   
-  # 【输出到 GitHub 首页摘要】
+  # 2. 输出到 GitHub 首页摘要面板
   echo "### ✅ 匹配成功！精准锁定以下组合：" >> $GITHUB_STEP_SUMMARY
   echo '```text' >> $GITHUB_STEP_SUMMARY
   echo "$FORMATTED_RESULT" >> $GITHUB_STEP_SUMMARY
