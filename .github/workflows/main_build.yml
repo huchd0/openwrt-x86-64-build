@@ -6,7 +6,7 @@ on:
       arch:
         description: '设备架构(Arch)'
         required: true
-        default: 'ramips-mt7621'
+        default: 'mediatek-filogic'
       brand:
         description: '品牌过滤 [防刷砖双保险] (如: jdcloud, xiaomi)'
         required: false
