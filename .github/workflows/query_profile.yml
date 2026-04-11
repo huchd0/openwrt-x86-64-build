@@ -33,7 +33,6 @@ jobs:
         id: vars
         run: |
           if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
-            # 精准抓取 Docker Hub 上当前最新的稳定版版本号
             LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "openwrt-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sed -E 's/.*openwrt-//' | sort -V | tail -n 1)
             [ -z "$LATEST" ] || [ "$LATEST" == "null" ] && LATEST="24.10.5"
             echo "VERSION=$LATEST" >> $GITHUB_ENV
@@ -47,7 +46,7 @@ jobs:
           echo -e "=======================================================\n"
           
           # ==========================================
-          # 📝 1. 净化与【三填一】防呆逻辑
+          # 📝 1. 净化与防呆逻辑
           # ==========================================
           trim() {
             local s="$1"
@@ -62,12 +61,12 @@ jobs:
           
           if [ -z "$RAW_ARCH" ] && [ -z "$RAW_BRAND" ] && [ -z "$RAW_MODEL" ]; then
              echo "❌ 触发防呆拦截：架构、品牌、型号不能全部为空！"
-             echo "💡 请至少填写一项线索（执行“三填一”底线规则）。"
+             echo "💡 请至少填写一项线索。"
              exit 1
           fi
           
           # ==========================================
-          # 📝 2. 品牌与型号双字典配置
+          # 📝 2. 双字典配置
           # ==========================================
           BRAND_DICT="
           小米|mi               (xiaomi)
@@ -126,14 +125,13 @@ jobs:
           "
           
           # ==========================================
-          # ⚙️ 3. 核心翻译引擎 (套娃免疫版)
+          # ⚙️ 3. 核心翻译引擎 (已彻底免疫套娃 Bug)
           # ==========================================
           translate() {
             local input="$1"
             local dict="$2"
             local output=""
             
-            # 将用户的输入按空格拆词，逐个击破
             for word in $input; do
               local matched=0
               while IFS= read -r line; do
@@ -145,7 +143,7 @@ jobs:
                 for raw_alias in "${ALIAS_ARRAY[@]}"; do
                   local clean_alias=$(trim "$raw_alias")
                   
-                  # 只做精确的整词匹配，命中后立刻收手跳出
+                  # 严格执行完整词汇校验，拒绝乱入套娃
                   if [ "$word" == "$clean_alias" ]; then
                     output="$output $target"
                     matched=1
@@ -154,7 +152,6 @@ jobs:
                 done
               done <<< "$dict"
               
-              # 没命中字典的词，原样保留
               if [ $matched -eq 0 ]; then
                 output="$output $word"
               fi
@@ -175,14 +172,14 @@ jobs:
           echo -e "-------------------------------------------------------\n"
 
           # ==========================================
-          # 🚀 4. API 架构动态提取
+          # 🚀 4. API 架构提取与 Snapshots 容错降级降落伞
           # ==========================================
           if [ -z "$RAW_ARCH" ]; then
             echo ">>> 正在连接云端，动态抓取全网架构节点池..."
             ARCH_LIST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=openwrt-${VERSION}" | jq -r '.results[].name' | grep -E "\-openwrt-${VERSION}$" | sed "s/-openwrt-${VERSION}$//")
             
             if [ -z "$ARCH_LIST" ]; then
-                echo "❌ 无法获取架构列表。请稍后重试。"
+                echo "❌ 无法获取架构列表。请检查网络或稍后重试。"
                 exit 1
             fi
             echo ">>> 成功锁定 $(echo "$ARCH_LIST" | wc -w) 个独立架构，开始极速遍历..."
@@ -193,8 +190,17 @@ jobs:
           ALL_LIST=""
           for arch in $ARCH_LIST; do
             subpath=$(echo "$arch" | sed 's/-/\//')
+            
+            # 主通道：尝试抓取 Release 正式版数据
             URL="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${subpath}/profiles.json"
             PROFILES=$(curl -sL --max-time 3 "$URL" | jq -r '.profiles | keys[]' 2>/dev/null || true)
+            
+            # 容错降落伞：如果正式版没数据，无缝切换到 Snapshots 抓取硬件 ID
+            if [ -z "$PROFILES" ]; then
+                FALLBACK_URL="https://downloads.immortalwrt.org/snapshots/targets/${subpath}/profiles.json"
+                PROFILES=$(curl -sL --max-time 3 "$FALLBACK_URL" | jq -r '.profiles | keys[]' 2>/dev/null || true)
+            fi
+
             if [ -n "$PROFILES" ]; then
                 for p in $PROFILES; do
                     ALL_LIST="$ALL_LIST\n$arch : $p"
@@ -204,7 +210,7 @@ jobs:
           ALL_LIST=$(echo -e "$ALL_LIST" | grep -v "^$")
 
           # ==========================================
-          # 🎯 5. 双重交叉过滤 (防暴毙版)
+          # 🎯 5. 双重交叉过滤
           # ==========================================
           RESULT="$ALL_LIST"
           [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B" || true)
