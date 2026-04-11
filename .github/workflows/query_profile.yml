@@ -158,75 +158,74 @@ jobs:
           QUERY_M="${PARSED_MODEL// /.*}"
 
           echo "🔍 引擎启动状态："
-          [ -n "$RAW_ARCH" ] && echo "   - 扫描模式: [本地极速穿透 - 指定架构 $RAW_ARCH]" || echo "   - 扫描模式: [云端多线程并发 - 跨架构盲搜]"
+          [ -n "$RAW_ARCH" ] && echo "   - 扫描模式: [本地极速穿透 - 指定架构 $RAW_ARCH]" || echo "   - 扫描模式: [云端安全防风控队列 - 跨架构盲搜]"
           [ -n "$QUERY_B" ] && echo "   - 品牌锁定: [$QUERY_B]"
           [ -n "$QUERY_M" ] && echo "   - 型号锁定: [$QUERY_M]"
           echo -e "-------------------------------------------------------\n"
 
           # ==========================================
-          # 🚀 4. 智能双擎抓取机制 (Docker内核 vs 镜像源多线程)
+          # 🚀 4. API 架构智能提取 (防防火墙拦截版)
           # ==========================================
           ALL_LIST=""
           
           if [ -n "$RAW_ARCH" ]; then
-              echo ">>> 检测到已填写架构，切换至 Docker 底层环境，直接提取底层数据..."
+              echo ">>> 检测到已填写架构，切换至 Docker 本地环境提取..."
               docker pull -q immortalwrt/imagebuilder:${RAW_ARCH}-openwrt-${VERSION} >/dev/null 2>&1 || true
-              # 极其稳定的原生内核提取
               ALL_LIST=$(docker run --rm immortalwrt/imagebuilder:${RAW_ARCH}-openwrt-${VERSION} make info 2>/dev/null | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1 | awk -v arch="$RAW_ARCH" '{print arch " : " $1}')
               
               if [ -z "$ALL_LIST" ]; then
-                  echo "❌ 拉取失败：可能架构名称拼写错误，或者该架构在当前版本暂无镜像。"
+                  echo "❌ 拉取失败：该架构可能拼写错误或不存在。"
                   exit 1
               fi
           else
-              echo ">>> 正在呼叫中心节点动态抓取全网架构池..."
+              echo ">>> 正在连接中心节点获取全网架构池..."
               ARCH_LIST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=openwrt-${VERSION}" | jq -r '.results[].name' | grep -E "\-openwrt-${VERSION}$" | sed "s/-openwrt-${VERSION}$//" || true)
               
               if [ -z "$ARCH_LIST" ]; then
-                  echo "❌ 无法获取架构列表，请检查网络或稍后重试。"
+                  echo "❌ 无法获取架构列表，请检查网络。"
                   exit 1
               fi
               
-              echo ">>> 成功锁定 $(echo "$ARCH_LIST" | wc -w) 个独立架构，启动中科大镜像源【多线程高并发】穿透抓取..."
+              echo ">>> 成功锁定 $(echo "$ARCH_LIST" | wc -w) 个独立架构。"
+              echo ">>> 🚦 正在启动【防风控安全队列】抓取云端设备库 (预计耗时 15-20 秒，请稍候)..."
               
               mkdir -p /tmp/profiles
               
-              # 【核心黑科技】：并发后台执行，3秒完成89次网络请求！
+              # 【修复】：采用安全队列逐个抓取，防止并发触发 CF盾 拦截！
               for arch in $ARCH_LIST; do
-                (
                   subpath=$(echo "$arch" | sed 's/-/\//')
-                  # 优先使用中科大源穿透 Cloudflare
                   URL="https://mirrors.ustc.edu.cn/immortalwrt/releases/${VERSION}/targets/${subpath}/profiles.json"
-                  PROFILES=$(curl -sL --max-time 5 "$URL" | jq -r '.profiles | keys[]' 2>/dev/null || true)
                   
-                  if [ -z "$PROFILES" ]; then
-                      # 备用：官方下载源
-                      FALLBACK_URL="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${subpath}/profiles.json"
-                      PROFILES=$(curl -sL --max-time 5 "$FALLBACK_URL" | jq -r '.profiles | keys[]' 2>/dev/null || true)
+                  # 静默抓取，检测 HTTP 状态码
+                  HTTP_CODE=$(curl -sL -w "%{http_code}" --max-time 3 -o /tmp/profiles/${arch}_raw.json "$URL" 2>/dev/null)
+                  
+                  # 如果中科大源被墙或没同步，无缝降级回官方源
+                  if [ "$HTTP_CODE" != "200" ]; then
+                      FALLBACK="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${subpath}/profiles.json"
+                      curl -sL --max-time 3 -o /tmp/profiles/${arch}_raw.json "$FALLBACK" 2>/dev/null || true
                   fi
                   
-                  if [ -n "$PROFILES" ]; then
-                      for p in $PROFILES; do
-                          echo "$arch : $p" >> /tmp/profiles/all_list.txt
-                      done
+                  # 解析入独立沙盒文件，彻底解决数据并发写入踩踏问题
+                  if [ -s /tmp/profiles/${arch}_raw.json ]; then
+                      jq -r '.profiles | keys[]' /tmp/profiles/${arch}_raw.json 2>/dev/null | awk -v a="$arch" '{print a " : " $1}' > /tmp/profiles/${arch}.txt || true
                   fi
-                ) &
               done
               
-              # 等待所有并发抓取任务完成
-              wait
-              
-              ALL_LIST=$(cat /tmp/profiles/all_list.txt 2>/dev/null || true)
+              # 瞬间合并所有独立数据
+              cat /tmp/profiles/*.txt > /tmp/all_list.txt 2>/dev/null || true
+              ALL_LIST=$(cat /tmp/all_list.txt 2>/dev/null || true)
               
               if [ -z "$ALL_LIST" ]; then
-                  echo "❌ 致命错误：数据池抓取失败。节点库正在维护或遭受拦截。"
-                  echo "💡 终极对策：请在上方手动填写一个大概的『设备架构』，引擎将自动为您切换至 100% 绝对可靠的本地查库模式！"
+                  echo "❌ 致命错误：数据池抓取失败，可能官网服务器正在维护。"
+                  echo "💡 终极对策：请在上方手动填写『设备架构』(如 ramips-mt7621)，引擎将自动切换为本地 100% 可靠查库模式！"
                   exit 1
               fi
+              
+              echo ">>> ✅ 全网数据库下载并合并完毕！总计提取到 $(echo "$ALL_LIST" | wc -l) 款设备。"
           fi
 
           # ==========================================
-          # 🎯 5. 过滤与输出
+          # 🎯 5. 双重交叉过滤
           # ==========================================
           RESULT="$ALL_LIST"
           [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B" || true)
