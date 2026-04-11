@@ -33,7 +33,8 @@ jobs:
         id: vars
         run: |
           if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
-            LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "openwrt-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sed -E 's/.*openwrt-//' | sort -V | tail -n 1 || echo "24.10.5")
+            # 如果 Docker API 被限流，静默降级到硬编码默认值
+            LATEST=$(curl -sL --max-time 5 "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' 2>/dev/null | grep -v "SNAPSHOT" | grep -E "openwrt-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sed -E 's/.*openwrt-//' | sort -V | tail -n 1 || echo "24.10.5")
             [ -z "$LATEST" ] || [ "$LATEST" == "null" ] && LATEST="24.10.5"
             echo "VERSION=$LATEST" >> $GITHUB_ENV
           else
@@ -155,87 +156,4 @@ jobs:
           PARSED_MODEL=$(translate "$RAW_MODEL" "$MODEL_DICT")
           
           QUERY_B="${PARSED_BRAND// /.*}"
-          QUERY_M="${PARSED_MODEL// /.*}"
-
-          echo "🔍 引擎启动状态："
-          [ -n "$RAW_ARCH" ] && echo "   - 扫描模式: [本地极速穿透 - 指定架构 $RAW_ARCH]" || echo "   - 扫描模式: [云端高并发 - 跨架构盲搜]"
-          [ -n "$QUERY_B" ] && echo "   - 品牌锁定: [$QUERY_B]"
-          [ -n "$QUERY_M" ] && echo "   - 型号锁定: [$QUERY_M]"
-          echo -e "-------------------------------------------------------\n"
-
-          # ==========================================
-          # 🚀 4. API 架构智能提取 (高并发 + 防截断完整版)
-          # ==========================================
-          ALL_LIST=""
-          
-          if [ -n "$RAW_ARCH" ]; then
-              echo ">>> 检测到已填写架构，切换至 Docker 本地环境提取..."
-              docker pull -q immortalwrt/imagebuilder:${RAW_ARCH}-openwrt-${VERSION} >/dev/null 2>&1 || true
-              ALL_LIST=$(docker run --rm immortalwrt/imagebuilder:${RAW_ARCH}-openwrt-${VERSION} make info 2>/dev/null | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1 | awk -v arch="$RAW_ARCH" '{print arch " : " $1}')
-              
-              if [ -z "$ALL_LIST" ]; then
-                  echo "❌ 拉取失败：该架构可能拼写错误或不存在。"
-                  exit 1
-              fi
-          else
-              echo ">>> 正在连接中心节点获取全网架构池..."
-              ARCH_LIST=$(curl -sL --max-time 10 "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=openwrt-${VERSION}" | jq -r '.results[].name' | grep -E "\-openwrt-${VERSION}$" | sed "s/-openwrt-${VERSION}$//" || true)
-              
-              if [ -z "$ARCH_LIST" ]; then
-                  echo "❌ 无法获取架构列表，请检查网络。"
-                  exit 1
-              fi
-              
-              echo ">>> 成功锁定 $(echo "$ARCH_LIST" | wc -w) 个独立架构。"
-              echo ">>> 🚦 正在启动【高并发安全通道】抓取完整云端设备库 (预计耗时 10-20 秒)..."
-              
-              mkdir -p /tmp/profiles
-              export VERSION="${VERSION}"
-              
-              # 【黑科技核心】：使用 xargs 开 10 个线程并发下载，并且用 -f 和 max-time 30 打造绝对不会被截断的数据源
-              printf "%s\n" $ARCH_LIST | xargs -I {} -P 10 sh -c '
-                  arch="{}"
-                  subpath=$(echo "$arch" | sed "s/-/\//")
-                  URL="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${subpath}/profiles.json"
-                  
-                  # 加上 -f 确保网页报错不会被误当成正常文件。加大超时至 30 秒保全 ramips 这种超级大户
-                  if ! curl -sL -f --connect-timeout 5 --max-time 30 -o "/tmp/profiles/${arch}_raw.json" "$URL"; then
-                      FALLBACK="https://mirrors.ustc.edu.cn/immortalwrt/releases/${VERSION}/targets/${subpath}/profiles.json"
-                      curl -sL -f --connect-timeout 5 --max-time 30 -o "/tmp/profiles/${arch}_raw.json" "$FALLBACK" || true
-                  fi
-                  
-                  # 只有用 jq -e 验证没有被截断的纯正 JSON，才允许写入数据池
-                  if [ -s "/tmp/profiles/${arch}_raw.json" ] && jq -e . "/tmp/profiles/${arch}_raw.json" >/dev/null 2>&1; then
-                      jq -r ".profiles | keys[]" "/tmp/profiles/${arch}_raw.json" | awk -v a="$arch" "{print a \" : \" \$1}" > "/tmp/profiles/${arch}.txt"
-                  fi
-              '
-              
-              cat /tmp/profiles/*.txt > /tmp/all_list.txt 2>/dev/null || true
-              ALL_LIST=$(cat /tmp/all_list.txt 2>/dev/null || true)
-              
-              if [ -z "$ALL_LIST" ]; then
-                  echo "❌ 致命错误：数据池抓取失败，可能官网服务器正在维护。"
-                  echo "💡 终极对策：请在上方手动填写『设备架构』(如 ramips-mt7621)，引擎将自动切换为本地查库模式！"
-                  exit 1
-              fi
-              
-              echo ">>> ✅ 全网数据库下载并合并完毕！总计提取到 $(echo "$ALL_LIST" | wc -l) 款设备。"
-          fi
-
-          # ==========================================
-          # 🎯 5. 双重交叉过滤
-          # ==========================================
-          RESULT="$ALL_LIST"
-          [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B" || true)
-          [ -n "$QUERY_M" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_M" || true)
-
-          if [ -z "$RESULT" ]; then
-            echo "❌ 匹配失败：数据库中未找到符合条件的设备。"
-            echo "💡 建议检查拼写，或尝试留空一个搜索框扩大检索范围。"
-          else
-            echo "✅ 匹配成功！为您精准锁定以下底层架构与设备代号组合："
-            echo -e "======================================================="
-            echo "$RESULT" | awk -F ':' '{printf "%-25s : %s\n", $1, $2}' | sort
-            echo -e "======================================================="
-            echo "👆 请将【冒号左侧】填入主编译脚本的 Arch，【冒号右侧】填入 Device Profile。"
-          fi
+          QUERY_M="${
