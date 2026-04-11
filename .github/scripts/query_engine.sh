@@ -200,33 +200,54 @@ EOF
 fi
 
 # ==========================================
-# 🎯 5. 增强型全语义模糊过滤 (通用方案)
+# 🎯 5. 增强型双重交叉过滤与智能降维输出
 # ==========================================
-# 提取纯数字备用关键词 (如 AX6000 -> 6000)
-PURE_NUM=$(echo "$RAW_MODEL" | tr -cd '0-9')
 
-# 执行多重过滤
-# 逻辑：(匹配品牌 AND 匹配型号) OR (匹配纯数字关键词)
+# 1. 尝试第一轮：基于翻译后的关键词精准匹配
 RESULT=$(echo "$ALL_LIST" | grep -iE "$QUERY_B" | grep -iE "$QUERY_M" || true)
 
-# 如果没搜到，自动启动“数字降维盲搜”
-if [ -z "$RESULT" ] && [ -n "$PURE_NUM" ]; then
-  echo "⚠️ 深度匹配未命中，启动 [数字降维盲搜] 模式..."
-  RESULT=$(echo "$ALL_LIST" | grep -iE "$PURE_NUM" | grep -iE "$RAW_BRAND" || echo "$ALL_LIST" | grep -iE "$PURE_NUM" || true)
+# 2. 智能降维逻辑：如果第一轮落空，且型号中包含数字 (如 AX6000 -> 6000)
+if [ -z "$RESULT" ]; then
+    PURE_NUM=$(echo "$RAW_MODEL" | tr -cd '0-9')
+    if [ -n "$PURE_NUM" ] && [ ${#PURE_NUM} -gt 1 ]; then
+        echo "⚠️ 第一轮精准匹配未命中，启动 [数字降维模糊搜索]..."
+        # 降维逻辑：匹配品牌关键词 且 匹配型号中的纯数字
+        RESULT=$(echo "$ALL_LIST" | grep -iE "$QUERY_B" | grep -iE "$PURE_NUM" || true)
+        
+        # 兜底：如果还是没有，直接全库搜数字 (仅限品牌也为空时)
+        if [ -z "$RESULT" ] && [ -z "$RAW_BRAND" ]; then
+            RESULT=$(echo "$ALL_LIST" | grep -iE "$PURE_NUM" || true)
+        fi
+    fi
 fi
 
-# 排除重复并排序
-RESULT=$(echo "$RESULT" | sort -u)
+# 3. 处理最终结果
+if [ -z "$RESULT" ]; then
+  echo "❌ 匹配失败：数据库中未找到符合条件的设备。"
   
-  # 极致对齐逻辑：18字符左对齐，冒号后无空格
+  # GitHub 首页摘要反馈
+  {
+    echo "### ❌ 匹配失败"
+    echo "在版本 \`${VERSION}\` 中未找到包含 \`${RAW_BRAND} ${RAW_MODEL}\` 的设备。"
+    echo "提示：由于某些机型（如小米 AX6000 高通版）在特定版本可能下架，建议切换版本查询。"
+  } >> $GITHUB_STEP_SUMMARY
+else
+  echo "✅ 匹配成功！为您精准锁定以下组合："
+  echo -e "======================================================="
+  
+  # 极致对齐逻辑：18字符左对齐，冒号后无空格，确保输出不分大小写且唯一
   FORMATTED_RESULT=$(echo "$RESULT" | awk -F ' : ' '{printf "%-18s:%s\n", $1, $2}' | sort -u)
   
+  # 1. 输出到黑框日志
   echo "$FORMATTED_RESULT"
   echo -e "======================================================="
   
-  # GitHub 首页摘要
-  echo "### ✅ 匹配成功！精准锁定以下组合：" >> $GITHUB_STEP_SUMMARY
-  echo '```text' >> $GITHUB_STEP_SUMMARY
-  echo "$FORMATTED_RESULT" >> $GITHUB_STEP_SUMMARY
-  echo '```' >> $GITHUB_STEP_SUMMARY
+  # 2. 输出到 GitHub 首页摘要面板
+  {
+    echo "### ✅ 匹配成功！为您精准锁定以下组合："
+    echo '```text'
+    echo "$FORMATTED_RESULT"
+    echo '```'
+    echo "> 💡 **提示**: 请复制 \`:\` 前后的内容分别填入构建参数的 Arch 和 Profile 中。"
+  } >> $GITHUB_STEP_SUMMARY
 fi
