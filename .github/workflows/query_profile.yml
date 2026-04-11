@@ -1,4 +1,4 @@
-name: 🔍 Query-Device-Profile (全网Profile查询引擎)
+name: 🔍 Query Device Profile (全网智能查询引擎)
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
             echo "VERSION=${{ inputs.openwrt_version }}" >> $GITHUB_ENV
           fi
 
-      - name: 📋 三填一引擎 (云端 API 直连极速版)
+      - name: 📋 启动云端 API 跨架构智能匹配
         run: |
           echo ">>> 目标环境版本: ${{ env.VERSION }}"
           echo -e "=======================================================\n"
@@ -126,24 +126,40 @@ jobs:
           "
           
           # ==========================================
-          # ⚙️ 3. 核心翻译引擎
+          # ⚙️ 3. 核心翻译引擎 (套娃免疫版)
           # ==========================================
           translate() {
             local input="$1"
             local dict="$2"
-            local output="$input"
+            local output=""
             
-            while IFS= read -r line; do
-              [[ ! "$line" =~ [^[:space:]] ]] && continue
-              local target="(${line##*(}"
-              local aliases_str="${line%(*}"
-              IFS='|' read -ra ALIAS_ARRAY <<< "$aliases_str"
-              for raw_alias in "${ALIAS_ARRAY[@]}"; do
-                local clean_alias=$(trim "$raw_alias")
-                [ -n "$clean_alias" ] && output="${output//$clean_alias/$target}"
-              done
-            done <<< "$dict"
-            echo "$output"
+            # 将用户的输入按空格拆词，逐个击破
+            for word in $input; do
+              local matched=0
+              while IFS= read -r line; do
+                [[ ! "$line" =~ [^[:space:]] ]] && continue
+                local target="(${line##*(}"
+                local aliases_str="${line%(*}"
+                
+                IFS='|' read -ra ALIAS_ARRAY <<< "$aliases_str"
+                for raw_alias in "${ALIAS_ARRAY[@]}"; do
+                  local clean_alias=$(trim "$raw_alias")
+                  
+                  # 只做精确的整词匹配，命中后立刻收手跳出
+                  if [ "$word" == "$clean_alias" ]; then
+                    output="$output $target"
+                    matched=1
+                    break 2
+                  fi
+                done
+              done <<< "$dict"
+              
+              # 没命中字典的词，原样保留
+              if [ $matched -eq 0 ]; then
+                output="$output $word"
+              fi
+            done
+            echo $(trim "$output")
           }
 
           PARSED_BRAND=$(translate "$RAW_BRAND" "$BRAND_DICT")
@@ -159,15 +175,14 @@ jobs:
           echo -e "-------------------------------------------------------\n"
 
           # ==========================================
-          # 🚀 4. API 架构动态提取与并发查询
+          # 🚀 4. API 架构动态提取
           # ==========================================
           if [ -z "$RAW_ARCH" ]; then
             echo ">>> 正在连接云端，动态抓取全网架构节点池..."
-            # 过滤并提取当前版本所有的官方架构
             ARCH_LIST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=openwrt-${VERSION}" | jq -r '.results[].name' | grep -E "\-openwrt-${VERSION}$" | sed "s/-openwrt-${VERSION}$//")
             
             if [ -z "$ARCH_LIST" ]; then
-                echo "❌ 无法获取架构列表。请稍后重试，或手动指定架构。"
+                echo "❌ 无法获取架构列表。请稍后重试。"
                 exit 1
             fi
             echo ">>> 成功锁定 $(echo "$ARCH_LIST" | wc -w) 个独立架构，开始极速遍历..."
@@ -176,32 +191,24 @@ jobs:
           fi
 
           ALL_LIST=""
-          
           for arch in $ARCH_LIST; do
-            # 自动进行路径转换 (如: ramips-mt7621 转换为 ramips/mt7621)
             subpath=$(echo "$arch" | sed 's/-/\//')
             URL="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${subpath}/profiles.json"
-            
-            # 直连官网下载服务器提取核心数据，过滤无设备的架构
             PROFILES=$(curl -sL --max-time 3 "$URL" | jq -r '.profiles | keys[]' 2>/dev/null || true)
-            
             if [ -n "$PROFILES" ]; then
                 for p in $PROFILES; do
-                    # 格式化拼接为: 架构 : 设备ID
                     ALL_LIST="$ALL_LIST\n$arch : $p"
                 done
             fi
           done
-          
-          # 清除空行
           ALL_LIST=$(echo -e "$ALL_LIST" | grep -v "^$")
 
           # ==========================================
-          # 🎯 5. 双重交叉过滤与智能排版输出
+          # 🎯 5. 双重交叉过滤 (防暴毙版)
           # ==========================================
           RESULT="$ALL_LIST"
-          [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B")
-          [ -n "$QUERY_M" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_M")
+          [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B" || true)
+          [ -n "$QUERY_M" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_M" || true)
 
           if [ -z "$RESULT" ]; then
             echo "❌ 匹配失败：在云端数据库中未找到符合条件的设备。"
@@ -209,7 +216,6 @@ jobs:
           else
             echo "✅ 匹配成功！以下是可供编译的精确组合："
             echo -e "======================================================="
-            # 使用 awk 实现完美的冒号左右左对齐排版
             echo "$RESULT" | awk -F ':' '{printf "%-25s : %s\n", $1, $2}'
             echo -e "======================================================="
             echo "👆 请将冒号左侧填入主编译脚本的 Arch，右侧填入 Device Profile。"
