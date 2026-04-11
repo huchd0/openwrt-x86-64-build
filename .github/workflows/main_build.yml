@@ -4,18 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       arch:
-        description: '设备架构 (如: ramips-mt7621, mediatek-filogic)'
+        description: '设备架构(Arch)'
         required: true
         default: 'ramips-mt7621'
       brand:
         description: '品牌过滤 [防刷砖双保险] (如: jdcloud, xiaomi)'
         required: false
-        default: 'jdcloud'
+        default: 'xiaomi'
         type: string
       device_profile:
-        description: '型号关键词 (如: re-cp-01, ax6000)'
+        description: '设备代号(Profile) (可填设备型号)'
         required: true
-        default: 're-cp-01'
+        default: 'AX6000'
       build_mode:
         description: '编译模式 (Deluxe豪华版: 注入内核与主题 | Lite精简版: 防超限)'
         required: true
