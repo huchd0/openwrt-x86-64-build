@@ -200,20 +200,23 @@ EOF
 fi
 
 # ==========================================
-# 🎯 5. 双重交叉过滤与大字报摘要输出 (18字符对齐)
+# 🎯 5. 增强型全语义模糊过滤 (通用方案)
 # ==========================================
-RESULT="$ALL_LIST"
-# 强制使用 -i 忽略大小写过滤结果
-[ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B" || true)
-[ -n "$QUERY_M" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_M" || true)
+# 提取纯数字备用关键词 (如 AX6000 -> 6000)
+PURE_NUM=$(echo "$RAW_MODEL" | tr -cd '0-9')
 
-if [ -z "$RESULT" ]; then
-  echo "❌ 匹配失败：数据库中未找到符合条件的设备。"
-  echo "### ❌ 匹配失败" >> $GITHUB_STEP_SUMMARY
-  echo "未找到符合条件的设备。建议尝试缩小搜索范围。" >> $GITHUB_STEP_SUMMARY
-else
-  echo "✅ 匹配成功！为您精准锁定以下组合："
-  echo -e "======================================================="
+# 执行多重过滤
+# 逻辑：(匹配品牌 AND 匹配型号) OR (匹配纯数字关键词)
+RESULT=$(echo "$ALL_LIST" | grep -iE "$QUERY_B" | grep -iE "$QUERY_M" || true)
+
+# 如果没搜到，自动启动“数字降维盲搜”
+if [ -z "$RESULT" ] && [ -n "$PURE_NUM" ]; then
+  echo "⚠️ 深度匹配未命中，启动 [数字降维盲搜] 模式..."
+  RESULT=$(echo "$ALL_LIST" | grep -iE "$PURE_NUM" | grep -iE "$RAW_BRAND" || echo "$ALL_LIST" | grep -iE "$PURE_NUM" || true)
+fi
+
+# 排除重复并排序
+RESULT=$(echo "$RESULT" | sort -u)
   
   # 极致对齐逻辑：18字符左对齐，冒号后无空格
   FORMATTED_RESULT=$(echo "$RESULT" | awk -F ' : ' '{printf "%-18s:%s\n", $1, $2}' | sort -u)
