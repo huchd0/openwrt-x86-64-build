@@ -33,7 +33,7 @@ jobs:
         id: vars
         run: |
           if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
-            LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "openwrt-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sed -E 's/.*openwrt-//' | sort -V | tail -n 1)
+            LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "openwrt-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sed -E 's/.*openwrt-//' | sort -V | tail -n 1 || echo "24.10.5")
             [ -z "$LATEST" ] || [ "$LATEST" == "null" ] && LATEST="24.10.5"
             echo "VERSION=$LATEST" >> $GITHUB_ENV
           else
@@ -164,7 +164,7 @@ jobs:
           echo -e "-------------------------------------------------------\n"
 
           # ==========================================
-          # 🚀 4. API 架构智能提取 (防防火墙拦截版)
+          # 🚀 4. API 架构智能提取 (防 28 号超时报错版)
           # ==========================================
           ALL_LIST=""
           
@@ -179,7 +179,7 @@ jobs:
               fi
           else
               echo ">>> 正在连接中心节点获取全网架构池..."
-              ARCH_LIST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=openwrt-${VERSION}" | jq -r '.results[].name' | grep -E "\-openwrt-${VERSION}$" | sed "s/-openwrt-${VERSION}$//" || true)
+              ARCH_LIST=$(curl -sL --max-time 10 "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=openwrt-${VERSION}" | jq -r '.results[].name' | grep -E "\-openwrt-${VERSION}$" | sed "s/-openwrt-${VERSION}$//" || true)
               
               if [ -z "$ARCH_LIST" ]; then
                   echo "❌ 无法获取架构列表，请检查网络。"
@@ -187,31 +187,31 @@ jobs:
               fi
               
               echo ">>> 成功锁定 $(echo "$ARCH_LIST" | wc -w) 个独立架构。"
-              echo ">>> 🚦 正在启动【防风控安全队列】抓取云端设备库 (预计耗时 15-20 秒，请稍候)..."
+              echo ">>> 🚦 正在启动【防风控安全队列】抓取云端设备库..."
               
               mkdir -p /tmp/profiles
               
-              # 【修复】：采用安全队列逐个抓取，防止并发触发 CF盾 拦截！
+              # 安全队列遍历
               for arch in $ARCH_LIST; do
                   subpath=$(echo "$arch" | sed 's/-/\//')
                   URL="https://mirrors.ustc.edu.cn/immortalwrt/releases/${VERSION}/targets/${subpath}/profiles.json"
                   
-                  # 静默抓取，检测 HTTP 状态码
-                  HTTP_CODE=$(curl -sL -w "%{http_code}" --max-time 3 -o /tmp/profiles/${arch}_raw.json "$URL" 2>/dev/null)
+                  # 【关键修复】：防超时崩溃装甲 (加上 || echo "000")
+                  HTTP_CODE=$(curl -sL -w "%{http_code}" --connect-timeout 2 --max-time 5 -o /tmp/profiles/${arch}_raw.json "$URL" 2>/dev/null || echo "000")
                   
-                  # 如果中科大源被墙或没同步，无缝降级回官方源
+                  # 如果中科大源返回的不是 200 (比如超时变000，或404)
                   if [ "$HTTP_CODE" != "200" ]; then
                       FALLBACK="https://downloads.immortalwrt.org/releases/${VERSION}/targets/${subpath}/profiles.json"
-                      curl -sL --max-time 3 -o /tmp/profiles/${arch}_raw.json "$FALLBACK" 2>/dev/null || true
+                      # 备用节点也要穿防弹衣
+                      curl -sL --connect-timeout 2 --max-time 5 -o /tmp/profiles/${arch}_raw.json "$FALLBACK" 2>/dev/null || true
                   fi
                   
-                  # 解析入独立沙盒文件，彻底解决数据并发写入踩踏问题
+                  # 只有当文件存在且不为空时才解析
                   if [ -s /tmp/profiles/${arch}_raw.json ]; then
                       jq -r '.profiles | keys[]' /tmp/profiles/${arch}_raw.json 2>/dev/null | awk -v a="$arch" '{print a " : " $1}' > /tmp/profiles/${arch}.txt || true
                   fi
               done
               
-              # 瞬间合并所有独立数据
               cat /tmp/profiles/*.txt > /tmp/all_list.txt 2>/dev/null || true
               ALL_LIST=$(cat /tmp/all_list.txt 2>/dev/null || true)
               
