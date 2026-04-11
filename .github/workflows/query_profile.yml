@@ -1,19 +1,22 @@
-# Profile查询工具，运行只需几秒钟，点开日志里的 📋 执行查询并过滤输出 步骤
-name: 🔍 Query-Device-Profile (查询设备ID)
+name: 🔍 Query-Device-Profile (全能设备查询)
 
 on:
   workflow_dispatch:
     inputs:
       arch:
-        description: '设备架构 (如: mediatek-filogic, ramips-mt7621)'
+        description: '1. 设备架构 (必选，决定搜索范围)'
         required: true
         default: 'mediatek-filogic'
-      keyword:
-        description: '搜索关键词 (如: ax6000, xiaomi。留空则列出该架构下所有设备)'
+      brand:
+        description: '2. 品牌 (支持中文/别名/带空格词汇)'
+        required: false
+        default: ''
+      model:
+        description: '3. 型号/绰号 (支持中文/代号/带空格词汇)'
         required: false
         default: ''
       openwrt_version:
-        description: '选择版本 (建议选 Auto)'
+        description: '选择版本 (Auto 抓取最新)'
         required: false
         default: 'Auto'
         type: choice
@@ -33,27 +36,160 @@ jobs:
           if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
             LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=$ARCH-openwrt-" | \
               jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sort -V | tail -n 1 | sed "s/$ARCH-openwrt-//")
-            if [ -z "$LATEST" ] || [ "$LATEST" == "null" ]; then
-              LATEST="24.10.5"
-            fi
+            [ -z "$LATEST" ] || [ "$LATEST" == "null" ] && LATEST="24.10.5"
             echo "VERSION=$LATEST" >> $GITHUB_ENV
           else
             echo "VERSION=${{ inputs.openwrt_version }}" >> $GITHUB_ENV
           fi
 
-      - name: 📋 执行查询并过滤输出
+      - name: 📋 双字典智能匹配引擎 (防空格打断版)
         run: |
-          echo ">>> 正在拉取镜像: immortalwrt/imagebuilder:${{ inputs.arch }}-openwrt-${{ env.VERSION }}"
-          echo -e "\n======================================================="
+          echo ">>> 目标环境: ${{ inputs.arch }} | ${{ env.VERSION }}"
+          echo -e "=======================================================\n"
           
-          # 直接在 docker 容器内运行 make info，并提取准确的 Profile ID
-          if [ -z "${{ inputs.keyword }}" ]; then
-            echo ">>> 该架构下支持的所有设备 ID 如下："
-            docker run --rm immortalwrt/imagebuilder:${{ inputs.arch }}-openwrt-${{ env.VERSION }} make info | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1
+          # ==========================================
+          # 📝 1. 品牌字典 (Brand Dict)
+          # 规则：别名之间用 | 隔开，最后 1 个词是 (英文代号)
+          # 举例：即使写成 "mi router|小米"，引擎也能完美识别 "mi router"
+          # ==========================================
+          BRAND_DICT="
+          # --- 主流零售品牌 ---
+          小米|mi               (xiaomi)
+          红米                  (redmi)
+          华硕|败家之眼|asus    (asus)
+          普联|tp|tplink        (tplink|tp-link)
+          网件|netgear          (netgear)
+          领势|linksys          (linksys)
+          腾达|tenda            (tenda)
+          水星|mercury          (mercury)
+          中兴|zte              (zte)
+          华为|huawei           (huawei)
+          友讯|dlink            (dlink)
+          华三|h3c              (h3c)
+          锐捷|ruijie           (ruijie)
+          
+          # --- 矿渣/运营商定制/开源品牌 ---
+          京东云|jd|无线宝      (jdcloud)
+          斐讯|phicomm          (phicomm)
+          新路由|newifi|dteam   (newifi|d-team)
+          极路由|hiwifi         (hiwifi)
+          奇虎|360              (qihoo)
+          移动|中国移动|cmcc    (cmcc)
+          捷稀|jcg              (jcg)
+          广和通|glinet|gl      (glinet)
+          友善|nanopi|friendlyarm (friendlyarm)
+          迅雷|网心云|赚钱宝    (xunlei|onething|thunder)
+          "
+          
+# ==========================================
+          # 📝 2. 型号字典 (Model Dict)
+          # 规则：即使字典找不到，引擎也会原样拿去模糊搜索！
+          # ==========================================
+          MODEL_DICT="
+          # --- 京东云系列 ---
+          一代|1代|cp01         (re-cp-01)
+          二代|2代|sp01b        (re-sp-01b)
+          亚瑟|ax1800pro        (ax1800-pro)
+          雅典娜|ax6600         (ax6600)
+          百里                  (ax6000)
+          鲁班|cl01             (re-cl-01)
+          
+          # --- 斐讯经典神机 ---
+          k2|k2经典             (k2)
+          k2p|k2p神机           (k2p)
+          k3|k3路由器           (k3)
+          k3c                   (k3c)
+          
+          # --- 小米/红米热门系列 ---
+          cr6606|cr6608|cr6609  (cr660x)
+          wr30u|联通wr30u       (wr30u)
+          ax3000t               (ax3000t)
+          ax3600                (ax3600)
+          ax9000                (ax9000)
+          
+          # --- 新路由系列 ---
+          新路由1|y1|mini       (y1)
+          新路由2|d1            (d1)
+          新路由3|d2|newifi3    (d2)
+          
+          # --- ARM 软路由/开发板系列 ---
+          r2s                   (nanopi-r2s)
+          r4s                   (nanopi-r4s)
+          r5s                   (nanopi-r5s)
+          r5c                   (nanopi-r5c)
+          r6s                   (nanopi-r6s)
+          
+          # --- 其他热门矿渣/高性价比神机 ---
+          t7|360t7              (t7)
+          q20|捷稀q20           (q20)
+          rax3000m|移动rax3000m (rax3000m)
+          e8820s|中兴e8820s     (e8820s)
+          "
+          
+          # ==========================================
+          # ⚙️ 处理引擎
+          # ==========================================
+          RAW_BRAND="${{ inputs.brand }}"
+          RAW_MODEL="${{ inputs.model }}"
+          
+          if [ -z "$RAW_BRAND" ] && [ -z "$RAW_MODEL" ]; then
+             echo "⚠️ 提示：品牌和型号输入均为空，正在为您列出该架构下所有可用设备："
+             docker run --rm immortalwrt/imagebuilder:${{ inputs.arch }}-openwrt-${{ env.VERSION }} make info | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1
+             exit 0
+          fi
+
+          # 终极翻译函数 (原生支持 | 分割及防空格打断)
+          translate() {
+            local input="$1"
+            local dict="$2"
+            local output="$input"
+            
+            # 使用原生 Bash 读取以保证最高兼容性
+            while IFS= read -r line; do
+              # 过滤空行
+              [[ ! "$line" =~ [^[:space:]] ]] && continue
+              
+              # 提取最后一个以空格分割的字符串作为目标，如 (re-cl-01)
+              local target="${line##* }"
+              
+              # 提取前面的所有内容作为别名集合，如 "鲁班|cl01"
+              local aliases_str="${line% $target}"
+              
+              # 严格使用 | 分割别名
+              IFS='|' read -ra ALIAS_ARRAY <<< "$aliases_str"
+              for alias in "${ALIAS_ARRAY[@]}"; do
+                # 智能剔除别名可能带有的首尾残留空格，保留内部空格
+                alias="${alias#"${alias%%[![:space:]]*}"}"
+                alias="${alias%"${alias##*[![:space:]]}"}"
+                
+                [ -n "$alias" ] && output="${output//$alias/$target}"
+              done
+            done <<< "$dict"
+            echo "$output"
+          }
+
+          PARSED_BRAND=$(translate "$RAW_BRAND" "$BRAND_DICT")
+          PARSED_MODEL=$(translate "$RAW_MODEL" "$MODEL_DICT")
+          
+          # 将最终的空格转换为正则中的 .* 符号
+          QUERY_B="${PARSED_BRAND// /.*}"
+          QUERY_M="${PARSED_MODEL// /.*}"
+
+          echo "🔍 引擎搜索指令：品牌[$QUERY_B] + 型号[$QUERY_M]"
+          echo -e "-------------------------------------------------------"
+
+          ALL_LIST=$(docker run --rm immortalwrt/imagebuilder:${{ inputs.arch }}-openwrt-${{ env.VERSION }} make info | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1)
+          
+          RESULT="$ALL_LIST"
+          [ -n "$QUERY_B" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_B")
+          [ -n "$QUERY_M" ] && RESULT=$(echo "$RESULT" | grep -iE "$QUERY_M")
+
+          if [ -z "$RESULT" ]; then
+            echo "❌ 匹配失败：当前架构下不存在该设备。"
           else
-            echo ">>> 正在搜索包含关键词 [${{ inputs.keyword }}] 的设备 ID："
-            docker run --rm immortalwrt/imagebuilder:${{ inputs.arch }}-openwrt-${{ env.VERSION }} make info | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1 | grep -i "${{ inputs.keyword }}" || echo "❌ 未找到相关设备，请检查架构或更换关键词"
+            echo "✅ 匹配成功！以下是可用的精确 ID："
+            echo "$RESULT"
           fi
           
-          echo "======================================================="
-          echo "👆 复制上面的精确 ID，填入主构建流程的 device_profile 框中。"
+          echo -e "======================================================="
+          echo "👆 请复制上述精确 ID 用于主构建流程的 device_profile 输入框。"
