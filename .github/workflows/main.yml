@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       arch:
-        description: '设备架构 (如: ramips-mt7621, mediatek-filogic)'
+        description: '设备架构arch (如: ramips-mt7621, mediatek-filogic)'
         required: true
         default: 'mediatek-filogic'
       brand:
@@ -13,7 +13,7 @@ on:
         default: 'xiaomi'
         type: string
       device_profile:
-        description: '型号关键词 (如: ax6000, k2p, r4s)'
+        description: '型号关键词profile (如: ax6000, k2p, r4s)'
         required: true
         default: 'ax6000'
       openwrt_version:
