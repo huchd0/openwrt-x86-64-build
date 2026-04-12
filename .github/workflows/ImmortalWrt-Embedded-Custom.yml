@@ -97,9 +97,10 @@ jobs:
         uses: softprops/action-gh-release@v2.4.1
         if: success()
         with:
-          tag_name: "${{ env.CLEAN_PROFILE }}-${{ env.VERSION }}-${{ github.run_id }}"
+          tag_name: "${{ env.CLEAN_PROFILE }}-${{ env.VERSION }}-${{ env.CLEAN_ARCH }}"
           body: |
             ## 🛠️ 构建详情
+            - **内核架构**: ${{ env.CLEAN_ARCH }}
             - **设备代号**: ${{ env.CLEAN_PROFILE }}
             - **构建模式**: **${{ inputs.build_mode }}**
             - **固件版本**: ${{ env.VERSION }}
