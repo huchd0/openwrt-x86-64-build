@@ -9,7 +9,7 @@ if [[ ! "$MANAGEMENT_IP" == *"/"* ]]; then
     MANAGEMENT_IP="${MANAGEMENT_IP}/24"
 fi
 
-echo ">>> 1. 自定义固件参数 (互刷保护) <<<"
+echo "=== 1. 自定义固件参数 (互刷保护) ==="
 echo "CONFIG_TARGET_KERNEL_PARTSIZE=64" >> .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE" >> .config
 
@@ -23,11 +23,11 @@ echo "CONFIG_QCOW2_IMAGES=n" >> .config
 echo "CONFIG_ISO_IMAGES=n" >> .config
 echo "CONFIG_GRUB_IMAGES=n" >> .config
 
-echo ">>> 2. 准备初始化文件夹 <<<"
+echo "=== 2. 准备初始化文件夹 ==="
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/init.d
 
-echo ">>> 3. 下载必要核心与驱动固件 <<<"
+echo "=== 3. 下载必要核心与驱动固件 ==="
 
 # 提前下载并注入 OpenClash Meta 兼容版内核
 echo "正在下载 OpenClash Meta 兼容版内核..."
@@ -51,11 +51,8 @@ wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin \
 wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin \
 "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
-echo ">>> 4. 编写全自动开机初始化脚本 <<<"
+echo "=== 4. 编写全自动开机初始化脚本 ==="
 
-# ===================================================================
-# --- 🎯 后台自动抓取真实 PCI 路径，注入专属 Wi-Fi 参数 ---
-# ===================================================================
 cat << 'EOF_WIFI' > files/etc/init.d/wifi-auto-patch
 #!/bin/sh /etc/rc.common
 START=99
@@ -103,7 +100,6 @@ chmod +x files/etc/init.d/wifi-auto-patch
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
 
-# 注册 Wi-Fi 智能补全服务
 /etc/init.d/wifi-auto-patch enable
 
 # --- A1. 核心网络设置 ---
@@ -228,7 +224,6 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     touch /etc/collectd_inited
 fi
 
-# 专属美化：强制应用 Argon 主题
 if uci get luci.themes.Argon >/dev/null 2>&1; then
     uci set luci.main.mediaurlbase='/luci-static/argon'
     uci commit luci
@@ -240,45 +235,151 @@ EOF
 chmod +x files/etc/uci-defaults/99-custom-setup
 
 
-echo ">>> 5. 配置 ImmortalWrt 专属软件列表 (满血叠加版) <<<"
+echo "=== 5. 配置 ImmortalWrt 专属软件列表 (结构化数组防错版) ==="
 
-# 1. 基础组件与中文包 (修复补回: 软件包管理界面汉化)
-PKG_CORE="-dnsmasq -dnsmasq-default dnsmasq-full luci luci-base luci-compat luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn"
+# 1. 基础组件与中文包 (减号代表防冲突卸载)
+PKG_CORE=(
+    "-dnsmasq"
+    "-dnsmasq-default"
+    "dnsmasq-full"
+    "luci"
+    "luci-base"
+    "luci-compat"
+    "luci-i18n-base-zh-cn"
+    "luci-i18n-firewall-zh-cn"
+    "luci-i18n-package-manager-zh-cn"
+)
 
 # 2. 磁盘与文件系统支持
-PKG_DISK="block-mount blkid lsblk parted fdisk e2fsprogs kmod-usb-storage kmod-usb-storage-uas kmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-vfat kmod-fs-exfat"
+PKG_DISK=(
+    "block-mount"
+    "blkid"
+    "lsblk"
+    "parted"
+    "fdisk"
+    "e2fsprogs"
+    "kmod-usb-storage"
+    "kmod-usb-storage-uas"
+    "kmod-fs-ext4"
+    "kmod-fs-ntfs3"
+    "kmod-fs-vfat"
+    "kmod-fs-exfat"
+)
 
-# 3. 依赖环境
-PKG_DEPENDS="coreutils-nohup bash jq curl ca-bundle libcap libcap-bin ruby ruby-yaml unzip"
+# 3. 底层依赖环境
+PKG_DEPENDS=(
+    "coreutils-nohup"
+    "bash"
+    "jq"
+    "curl"
+    "ca-bundle"
+    "libcap"
+    "libcap-bin"
+    "ruby"
+    "ruby-yaml"
+    "unzip"
+)
 
-# 4. 网络与底层驱动 (新增 kmod-tcp-bbr 榨干带宽)
-PKG_NETWORK="ip-full iptables-mod-tproxy iptables-mod-extra kmod-tun kmod-inet-diag kmod-nft-tproxy kmod-igc kmod-igb kmod-r8169 iwinfo kmod-tcp-bbr"
+# 4. 网络与底层驱动 (含 BBR 加速)
+PKG_NETWORK=(
+    "ip-full"
+    "iptables-mod-tproxy"
+    "iptables-mod-extra"
+    "kmod-tun"
+    "kmod-inet-diag"
+    "kmod-nft-tproxy"
+    "kmod-igc"
+    "kmod-igb"
+    "kmod-r8169"
+    "iwinfo"
+    "kmod-tcp-bbr"
+)
 
-# 5. Wi-Fi 7 (MT7925) 与蓝牙支持 (防冲突：全量排除基础版 wpad)
-PKG_WIFI_BT="-wpad -wpad-basic -wpad-basic-mbedtls -wpad-basic-wolfssl -wpad-mbedtls -wpad-wolfssl wpad-openssl kmod-mt7925e kmod-mt7925-firmware kmod-btusb bluez-daemon kmod-input-uinput"
+# 5. Wi-Fi 7 (MT7925) 与蓝牙支持 (严密排除基础版 wpad)
+PKG_WIFI_BT=(
+    "-wpad"
+    "-wpad-basic"
+    "-wpad-basic-mbedtls"
+    "-wpad-basic-wolfssl"
+    "-wpad-mbedtls"
+    "-wpad-wolfssl"
+    "wpad-openssl"
+    "kmod-mt7925e"
+    "kmod-mt7925-firmware"
+    "kmod-btusb"
+    "bluez-daemon"
+    "kmod-input-uinput"
+)
 
-# 6. 系统监控 (剔除 mqtt 避免报错)
-PKG_MONITOR="nano htop ethtool tcpdump mtr conntrack iftop screen collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool collectd-mod-iwinfo"
+# 6. 系统监控
+PKG_MONITOR=(
+    "nano"
+    "htop"
+    "ethtool"
+    "tcpdump"
+    "mtr"
+    "conntrack"
+    "iftop"
+    "screen"
+    "collectd-mod-thermal"
+    "collectd-mod-sensors"
+    "collectd-mod-cpu"
+    "collectd-mod-ping"
+    "collectd-mod-interface"
+    "collectd-mod-rrdtool"
+    "collectd-mod-iwinfo"
+)
 
-# 7. x86 硬件级调试工具与微码 (专为 Intel J4125 优化)
-PKG_HW_TOOLS="pciutils usbutils iperf3 intel-microcode""
+# 7. x86 硬件级调试工具与微码
+PKG_HW_TOOLS=(
+    "pciutils"
+    "usbutils"
+    "iperf3"
+    "intel-microcode"
+)
 
-# 8. 核心应用与面板 (修复补回: nlbwmon核心、新增: upnp、autoreboot定时重启)
-PKG_LUCI_APPS="luci-app-openclash luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn \
-luci-app-ttyd luci-i18n-ttyd-zh-cn \
-luci-app-ksmbd luci-i18n-ksmbd-zh-cn \
-nlbwmon luci-app-nlbwmon luci-i18n-nlbwmon-zh-cn \
-luci-app-statistics luci-i18n-statistics-zh-cn \
-luci-app-upnp luci-i18n-upnp-zh-cn \
-luci-app-autoreboot luci-i18n-autoreboot-zh-cn"
+# 8. 核心应用与面板
+PKG_LUCI_APPS=(
+    "luci-app-openclash"
+    "luci-theme-argon"
+    "luci-app-argon-config"
+    "luci-i18n-argon-config-zh-cn"
+    "luci-app-ttyd"
+    "luci-i18n-ttyd-zh-cn"
+    "luci-app-ksmbd"
+    "luci-i18n-ksmbd-zh-cn"
+    "nlbwmon"
+    "luci-app-nlbwmon"
+    "luci-i18n-nlbwmon-zh-cn"
+    "luci-app-statistics"
+    "luci-i18n-statistics-zh-cn"
+    "luci-app-upnp"
+    "luci-i18n-upnp-zh-cn"
+    "luci-app-autoreboot"
+    "luci-i18n-autoreboot-zh-cn"
+    # 如果未来想加什么插件，直接在这里回车新建一行，加上双引号即可
+    # "luci-app-zerotier" 
+)
 
-PACKAGES="$PKG_CORE $PKG_DISK $PKG_DEPENDS $PKG_NETWORK $PKG_WIFI_BT $PKG_MONITOR $PKG_HW_TOOLS $PKG_LUCI_APPS"
+# === 魔法组装：将所有数组安全地合并为一个大字符串 ===
+ALL_PKGS=(
+    "${PKG_CORE[@]}"
+    "${PKG_DISK[@]}"
+    "${PKG_DEPENDS[@]}"
+    "${PKG_NETWORK[@]}"
+    "${PKG_WIFI_BT[@]}"
+    "${PKG_MONITOR[@]}"
+    "${PKG_HW_TOOLS[@]}"
+    "${PKG_LUCI_APPS[@]}"
+)
 
-echo ">>> 开始 Make Image 打包 <<<"
-# 强制加入 KERNEL_PARTSIZE=64 确保双重互刷安全
+# 将数组转化为以空格分隔的字符串，供 ImageBuilder 读取
+PACKAGES="${ALL_PKGS[*]}"
+
+echo "=== 6. 开始 Make Image 打包 ==="
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
 
-echo ">>> 7. 提取固件 <<<"
+echo "=== 7. 提取固件 ==="
 mkdir -p output-firmware
 cp bin/targets/x86/64/*combined-efi.img.gz output-firmware/ 2>/dev/null || true
-echo ">>> 全部构建任务已圆满完成！ <<<"
+echo "=== 全部构建任务已圆满完成！ ==="
