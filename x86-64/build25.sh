@@ -260,8 +260,8 @@ PKG_WIFI_BT="-wpad -wpad-basic -wpad-basic-mbedtls -wpad-basic-wolfssl -wpad-mbe
 # 6. 系统监控 (剔除 mqtt 避免报错)
 PKG_MONITOR="nano htop ethtool tcpdump mtr conntrack iftop screen collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool collectd-mod-iwinfo"
 
-# 7. x86 硬件级调试工具与微码 (工控机底层稳定必备)
-PKG_HW_TOOLS="pciutils usbutils iperf3 intel-microcode amd-microcode"
+# 7. x86 硬件级调试工具与微码 (专为 Intel J4125 优化)
+PKG_HW_TOOLS="pciutils usbutils iperf3 intel-microcode""
 
 # 8. 核心应用与面板 (修复补回: nlbwmon核心、新增: upnp、autoreboot定时重启)
 PKG_LUCI_APPS="luci-app-openclash luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn \
