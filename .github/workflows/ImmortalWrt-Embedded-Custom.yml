@@ -1,22 +1,30 @@
-name: 🚀 ImmortalWrt-Embedded-Custom (定制化构建)
+name: 🚀 ImmortalWrt-Embedded-Custom (通用定制构建)
 
 on:
   workflow_dispatch:
     inputs:
       arch:
-        description: '1. 架构(Arch)* (如: ramips-mt7621, 左右空格会自动清除)'
+        description: '1. 架构(Arch)* (如: ramips-mt7621, 自动去空格)'
         required: true
         default: 'ramips-mt7621'
       device_profile:
-        description: '2. 设备代号(Profile)* (全字匹配，大小写无妨: jdcloud_re-sp-01b)'
+        description: '2. 设备代号(Profile)* (全字匹配: jdcloud_re-sp-01b)'
         required: true
         default: 'jdcloud_re-sp-01b'
       brand:
-        description: '3. 品牌 (选填，但强烈建议填写作防砖双保险，如: 京东云)'
+        description: '3. 品牌 (选填，防砖双保险，如: 京东云)'
         required: false
         default: ''
+      build_mode:
+        description: '4. 构建模式 (Lite 丐版极限防超容 / Deluxe 豪华版含U盘扩容驱动)'
+        required: true
+        default: 'Deluxe'
+        type: choice
+        options:
+          - 'Deluxe'
+          - 'Lite'
       openwrt_version:
-        description: '4. 选择主线版本 (Auto 将安全抓取最新版)'
+        description: '5. 选择主线版本'
         required: false
         default: 'Auto'
         type: choice
@@ -25,11 +33,11 @@ on:
           - '24.10.5'
           - '25.12.0-rc1'
       custom_version:
-        description: '5. 【时光机】手动填入旧版本 (如 23.05.4，填写则覆盖上方选项)'
+        description: '6. 【时光机】手动填入旧版本 (填写则覆盖上方)'
         required: false
         default: ''
       custom_router_ip:
-        description: '6. 固件默认管理 IP'
+        description: '7. 固件默认管理 IP'
         required: true
         default: '192.168.100.1'
 
@@ -46,22 +54,19 @@ jobs:
       - name: 🔍 净化输入变量与解析版本
         id: vars
         run: |
-          # 【自动去空格魔法】彻底清除输入框首尾的空格
           CLEAN_ARCH=$(echo "${{ inputs.arch }}" | xargs)
           CLEAN_PROFILE=$(echo "${{ inputs.device_profile }}" | xargs)
           CLEAN_BRAND=$(echo "${{ inputs.brand }}" | xargs)
           
-          # 版本解析逻辑
           if [ -n "${{ inputs.custom_version }}" ]; then
             SELECTED_VER=$(echo "${{ inputs.custom_version }}" | xargs)
-            echo ">>> 🛰️ 检测到手动版本，切换至历史时空: $SELECTED_VER"
+            echo ">>> 🛰️ 切换至历史时空: $SELECTED_VER"
           elif [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
-            echo ">>> 正在探测 [$CLEAN_ARCH] 的最新 Tag..."
+            echo ">>> 探测 [$CLEAN_ARCH] 最新 Tag..."
             LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=${CLEAN_ARCH}-openwrt-" | \
               jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sort -V | tail -n 1 | sed "s/${CLEAN_ARCH}-openwrt-//")
             
             if [ -z "$LATEST" ] || [ "$LATEST" == "null" ]; then
-              echo "⚠️ 探测失败，回退至稳定版 24.10.5"
               LATEST="24.10.5"
             fi
             SELECTED_VER="$LATEST"
@@ -69,7 +74,6 @@ jobs:
             SELECTED_VER="${{ inputs.openwrt_version }}"
           fi
           
-          echo "✅ 最终锁定版本: $SELECTED_VER"
           echo "VERSION=$SELECTED_VER" >> $GITHUB_ENV
           echo "CLEAN_ARCH=$CLEAN_ARCH" >> $GITHUB_ENV
           echo "CLEAN_PROFILE=$CLEAN_PROFILE" >> $GITHUB_ENV
@@ -81,8 +85,6 @@ jobs:
           SCRIPT_PATH="./.github/scripts/build_embedded.sh"
           [ -f "$SCRIPT_PATH" ] && sed -i 's/\r$//' "$SCRIPT_PATH"
           
-          echo ">>> 🚀 启动镜像: immortalwrt/imagebuilder:${{ env.CLEAN_ARCH }}-openwrt-${{ env.VERSION }}"
-          
           docker run --rm -i \
             --user root \
             -v "${{ github.workspace }}/bin:/home/build/immortalwrt/bin" \
@@ -92,6 +94,7 @@ jobs:
             -e TARGET_ARCH="${{ env.CLEAN_ARCH }}" \
             -e DEVICE_PROFILE="${{ env.CLEAN_PROFILE }}" \
             -e BRAND_INPUT="${{ env.CLEAN_BRAND }}" \
+            -e BUILD_MODE="${{ inputs.build_mode }}" \
             immortalwrt/imagebuilder:${{ env.CLEAN_ARCH }}-openwrt-${{ env.VERSION }} \
             /bin/bash /home/build/immortalwrt/build.sh
 
@@ -102,11 +105,10 @@ jobs:
           tag_name: "${{ env.CLEAN_PROFILE }}-${{ env.VERSION }}-${{ github.run_id }}"
           body: |
             ## 🛠️ 构建详情
-            - **内核架构 (Arch)**: ${{ env.CLEAN_ARCH }}
-            - **设备代号 (Profile)**: ${{ env.CLEAN_PROFILE }}
-            - **安全匹配品牌**: ${{ env.CLEAN_BRAND != '' && env.CLEAN_BRAND || '未填写 (跳过校验)' }}
+            - **内核架构**: ${{ env.CLEAN_ARCH }}
+            - **设备代号**: ${{ env.CLEAN_PROFILE }}
+            - **构建模式**: **${{ inputs.build_mode }}**
             - **固件版本**: ${{ env.VERSION }}
-            - **默认 IP**: ${{ inputs.custom_router_ip }}
           files: |
             bin/targets/*/*/*.bin
             bin/targets/*/*/*.img.gz
