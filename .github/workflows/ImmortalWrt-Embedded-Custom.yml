@@ -18,7 +18,7 @@ on:
       build_mode:
         description: '4. 模式: Lite(丐版) / Extroot(智能U盘扩容) / Deluxe(豪华版)'
         required: true
-        default: 'Extroot'
+        default: 'Deluxe'
         type: choice
         options:
           - 'Deluxe'
