@@ -229,27 +229,6 @@ if [ "$INCLUDE_DOCKER" = "yes" ]; then
     uci set dockerd.globals=globals
     uci set dockerd.globals.data_root='/mnt/sda3/docker'
     uci commit dockerd
-
-    uci add firewall zone
-    uci set firewall.@zone[-1].name='docker'
-    uci set firewall.@zone[-1].network='docker0'
-    uci set firewall.@zone[-1].input='ACCEPT'
-    uci set firewall.@zone[-1].output='ACCEPT'
-    uci set firewall.@zone[-1].forward='ACCEPT'
-
-    uci add firewall forwarding
-    uci set firewall.@forwarding[-1].src='docker'
-    uci set firewall.@forwarding[-1].dest='lan'
-
-    uci add firewall forwarding
-    uci set firewall.@forwarding[-1].src='lan'
-    uci set firewall.@forwarding[-1].dest='docker'
-
-    uci add firewall forwarding
-    uci set firewall.@forwarding[-1].src='docker'
-    uci set firewall.@forwarding[-1].dest='wan'
-    
-    uci commit firewall
 fi
 
 if uci get luci.themes.Argon >/dev/null 2>&1; then
