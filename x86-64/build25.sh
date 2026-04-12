@@ -29,7 +29,6 @@ mkdir -p files/etc/init.d
 
 echo "=== 3. 下载必要核心与驱动固件 ==="
 
-# 提前下载并注入 OpenClash Meta 兼容版内核
 echo "正在下载 OpenClash Meta 兼容版内核..."
 mkdir -p files/etc/openclash/core
 wget -qO files/etc/openclash/core/meta.tar.gz "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz"
@@ -38,19 +37,54 @@ mv files/etc/openclash/core/clash files/etc/openclash/core/clash_meta
 chmod +x files/etc/openclash/core/clash_meta
 rm -f files/etc/openclash/core/meta.tar.gz
 
-# --- 注入 MT7925 官方蓝牙与无线固件 ---
 echo "正在注入 MT7925 官方底层固件..."
 mkdir -p files/lib/firmware/mediatek/mt7925
 
-wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin \
-"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin"
-
-wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin \
-"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
-
-wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin \
-"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
+wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
 echo "=== 4. 编写全自动开机初始化脚本 ==="
 
-cat << 'EOF_WIFI' > files/
+# 注意这里的路径，千万不能有空格
+cat << 'EOF_WIFI' > files/etc/init.d/wifi-auto-patch
+#!/bin/sh /etc/rc.common
+START=99
+
+start() {
+    (
+        WAIT=0
+        while [ $WAIT -lt 30 ]; do
+            wifi config
+            if uci get wireless.radio0 >/dev/null 2>&1; then
+                break
+            fi
+            sleep 2
+            WAIT=$((WAIT+1))
+        done
+
+        if uci get wireless.radio0 >/dev/null 2>&1; then
+            uci set wireless.radio0.band='5g'
+            uci set wireless.radio0.channel='149'
+            uci set wireless.radio0.htmode='EHT80'
+            uci set wireless.radio0.country='AU'
+            uci set wireless.radio0.cell_density='0'
+            uci set wireless.radio0.txpower='23'
+            
+            for iface in $(uci show wireless | grep '=wifi-iface' | cut -d'.' -f2 | cut -d'=' -f1); do
+                uci set wireless.${iface}.ssid='mywifi7'
+                uci set wireless.${iface}.encryption='sae-mixed'
+                uci set wireless.${iface}.key='Aa666666'
+                uci set wireless.${iface}.ieee80211w='1'
+                uci set wireless.${iface}.network='lan'
+                uci set wireless.${iface}.mode='ap'
+            done
+            
+            uci commit wireless
+        fi
+        
+        /etc/init.d/wifi-auto-patch disable
+        rm -f /etc/init.d/wifi-auto-patch
+    ) &
+}
+EOF_WIFI
