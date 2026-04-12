@@ -1,173 +1,105 @@
 #!/bin/bash
+# 终止脚本执行如果发生错误
 set -e
 
-# 终端输出颜色定义
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # 无颜色
+echo "开始执行自定义构建脚本 build25.sh..."
 
-echo "========================================================="
-echo -e "🕒 [$(date '+%Y-%m-%d %H:%M:%S')] ${BLUE}开始构建流程...${NC}"
-echo -e "📦 目标 RootFS 分区大小: ${GREEN}${ROOTFS_SIZE:-1024} MB${NC}"
-echo "========================================================="
+# =========================================================
+# 1. 定义基础插件与依赖 (针对 x86-64 优化)
+# =========================================================
+# 包含基础语言包、挂载工具、网卡驱动 (e1000e, igb, r8169) 以及 OpenClash 必需依赖
+PACKAGES="luci luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn \
+block-mount fdisk blkid curl wget-ssl ca-bundle ca-certificates \
+kmod-e1000e kmod-igb kmod-r8169 kmod-tun \
+luci-app-openclash coreutils-nohup bash dnsmasq-full ipset ip-full libcap libcap-bin ruby ruby-yaml unzip kmod-nft-tproxy iptables-nft"
 
-# >>> 1. 自定义固件参数 (注入 .config) <<<
-echo -e "${YELLOW}⚙️ 正在精简固件配置并设置分区大小...${NC}"
-
-# 使用 cat 一次性注入，避免多次调用 echo 导致 IO 碎片
-cat >> .config <<EOF
-# 设置内核分区大小
-CONFIG_TARGET_KERNEL_PARTSIZE=64
-# 禁用不需要的镜像格式 (精简输出)
-CONFIG_TARGET_ROOTFS_EXT4FS=n
-CONFIG_TARGET_ROOTFS_TARGZ=n
-CONFIG_VMDK_IMAGES=n
-CONFIG_VDI_IMAGES=n
-CONFIG_VHDX_IMAGES=n
-CONFIG_QCOW2_IMAGES=n
-CONFIG_ISO_IMAGES=n
-CONFIG_GRUB_IMAGES=n
-EOF
-
-echo "✅ 底层配置参数写入完成。"
-
-# >>> 2. 读取外部自定义包列表 <<<
-if [ -f "shell/custom-packages.sh" ]; then
-    echo "📜 加载自定义包脚本..."
-    source shell/custom-packages.sh
+# =========================================================
+# 2. 动态注入 Docker 组件
+# =========================================================
+if [ "$INCLUDE_DOCKER" = "yes" ]; then
+    echo "🐳 检测到 Docker 集成需求，正在添加相关包..."
+    # kmod-veth 是 Docker 容器网络互通的核心依赖，极易被漏掉
+    PACKAGES="$PACKAGES luci-app-dockerman luci-i18n-dockerman-zh-cn docker docker-compose dockerd kmod-veth iptables-mod-extra iptables-mod-nfqueue iptables-mod-filter"
 fi
 
-# >>> 3. 自动化初始化脚本 (UCI Defaults) <<<
-# 读取由 GitHub Actions 映射过来的 IP 地址文件
-if [ -f "files/etc/config/custom_router_ip.txt" ]; then
-    CUSTOM_ROUTER_IP=$(cat files/etc/config/custom_router_ip.txt)
-else
-    CUSTOM_ROUTER_IP="192.168.100.1"
-fi
+# =========================================================
+# 3. 生成 99-init-settings 开机自动化脚本
+# =========================================================
+# 注意：直接在 sh 文件中用 cat 生成该文件，可以彻底避免 Windows/Mac 编辑器导致的 CRLF 换行符报错问题。
+mkdir -p files/etc/uci-defaults
 
-echo -e "${YELLOW}🔧 写入系统初始化配置 (LAN IP: $CUSTOM_ROUTER_IP)...${NC}"
-INIT_SETTING="files/etc/uci-defaults/99-init-settings"
-mkdir -p "$(dirname "$INIT_SETTING")"
-
-# 写入基础网络配置
-cat << EOF > "$INIT_SETTING"
+cat << 'EOF' > files/etc/uci-defaults/99-init-settings
 #!/bin/sh
-# 设置 LAN 口 IP
-uci set network.lan.ipaddr='$CUSTOM_ROUTER_IP'
-uci commit network
-EOF
 
-# 判断并写入 PPPoE 拨号配置
-if [ "$ENABLE_PPPOE" == "yes" ]; then
-    echo "📝 注入 PPPoE 宽带拨号信息..."
-    cat << EOF >> "$INIT_SETTING"
+# 读取在 YAML 中动态生成的配置文件
+[ -f /etc/config/custom_router_ip.txt ] && CUSTOM_IP=$(cat /etc/config/custom_router_ip.txt) || CUSTOM_IP="192.168.100.1"
 
-# 设置 WAN 口 PPPoE 拨号
-uci set network.wan.proto='pppoe'
-uci set network.wan.username='$PPPOE_ACCOUNT'
-uci set network.wan.password='$PPPOE_PASSWORD'
-uci commit network
-EOF
+# [1] 配置 LAN 口 IP
+uci set network.lan.ipaddr="$CUSTOM_IP"
+
+# [2] 读取环境变量并配置宽带
+if [ -f /etc/config/build_env.txt ]; then
+    . /etc/config/build_env.txt
+    
+    if [ -n "$PPPOE_ACCOUNT" ] && [ -n "$PPPOE_PASSWORD" ]; then
+        uci set network.wan.proto='pppoe'
+        uci set network.wan.username="$PPPOE_ACCOUNT"
+        uci set network.wan.password="$PPPOE_PASSWORD"
+        uci set network.wan.ipv6='1' # 默认开启 IPv6 支持
+    fi
+
+    # [3] Docker 网络与防火墙打通 (真正的上手即用)
+    if [ "$INCLUDE_DOCKER" = "yes" ]; then
+        # 创建 Docker 专属防火墙区域
+        uci set firewall.docker=zone
+        uci set firewall.docker.name='docker'
+        uci set firewall.docker.network='docker0'
+        uci set firewall.docker.input='ACCEPT'
+        uci set firewall.docker.output='ACCEPT'
+        uci set firewall.docker.forward='ACCEPT'
+
+        # 允许 Docker 访问外网 (拉取镜像)
+        uci add firewall forwarding
+        uci set firewall.@forwarding[-1].src='docker'
+        uci set firewall.@forwarding[-1].dest='wan'
+
+        # 允许 LAN 访问 Docker (访问容器服务)
+        uci add firewall forwarding
+        uci set firewall.@forwarding[-1].src='lan'
+        uci set firewall.@forwarding[-1].dest='docker'
+        
+        # 允许 Docker 访问 LAN (容器反向代理或访问内网设备)
+        uci add firewall forwarding
+        uci set firewall.@forwarding[-1].src='docker'
+        uci set firewall.@forwarding[-1].dest='lan'
+    fi
 fi
 
-# 判断并写入 Docker 网络和防火墙放行规则
-if [ "$INCLUDE_DOCKER" == "yes" ]; then
-    echo "🐳 注入 Docker 专属网络与防火墙规则..."
-    cat << EOF >> "$INIT_SETTING"
+# 默认主题设置为 argon (如果固件自带的话)
+uci set luci.main.mediaurlbase='/luci-static/argon'
+uci commit
 
-# 1. 注册 Docker 虚拟网卡 (方便在 LuCI 网络界面查看)
-uci set network.docker=interface
-uci set network.docker.proto='none'
-uci set network.docker.device='docker0'
-uci commit network
-
-# 2. 创建 Docker 防火墙区域
-uci set firewall.docker=zone
-uci set firewall.docker.name='docker'
-uci set firewall.docker.network='docker'
-uci set firewall.docker.input='ACCEPT'
-uci set firewall.docker.output='ACCEPT'
-uci set firewall.docker.forward='ACCEPT'
-
-# 3. 允许 Docker 容器访问外网 (Docker -> WAN)
-uci set firewall.docker_to_wan=forwarding
-uci set firewall.docker_to_wan.src='docker'
-uci set firewall.docker_to_wan.dest='wan'
-
-# 4. 允许局域网设备访问 Docker 容器 (LAN <-> Docker 双向)
-uci set firewall.docker_to_lan=forwarding
-uci set firewall.docker_to_lan.src='docker'
-uci set firewall.docker_to_lan.dest='lan'
-uci set firewall.lan_to_docker=forwarding
-uci set firewall.lan_to_docker.src='lan'
-uci set firewall.lan_to_docker.dest='docker'
-
-uci commit firewall
-EOF
-fi
-
-# 追加自删除命令
-cat << EOF >> "$INIT_SETTING"
-
-# 运行一次后自删除，保持系统干净
+# 清理痕迹，完成无痕部署
+rm -f /etc/config/custom_router_ip.txt
+rm -f /etc/config/build_env.txt
 rm -f /etc/uci-defaults/99-init-settings
 exit 0
 EOF
 
-# 确保初始化脚本有执行权限
-chmod +x "$INIT_SETTING"
+chmod +x files/etc/uci-defaults/99-init-settings
 
-# >>> 4. 软件包组合策略 <<<
-# 基础常用工具
-BASE_PKGS="curl wget iperf3 luci-i18n-diskman-zh-cn luci-i18n-filemanager-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-ttyd-zh-cn openssh-sftp-server"
-# 主题与 UI
-THEME_PKGS="luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn"
-# 网络插件 (UPnP, 防火墙, 定时重启)
-NET_PKGS="luci-i18n-firewall-zh-cn luci-i18n-upnp-zh-cn luci-i18n-autoreboot-zh-cn"
-# 科学上网
-PROXY_PKGS="luci-app-openclash"
+# =========================================================
+# 4. 传递 YAML 环境变量给开机脚本
+# =========================================================
+# 将 Action 传入的变量固化到文件，供上述 99-init-settings 首次开机时读取
+echo "PPPOE_ACCOUNT='$PPPOE_ACCOUNT'" > files/etc/config/build_env.txt
+echo "PPPOE_PASSWORD='$PPPOE_PASSWORD'" >> files/etc/config/build_env.txt
+echo "INCLUDE_DOCKER='$INCLUDE_DOCKER'" >> files/etc/config/build_env.txt
 
-# 处理 Docker 插件需求
-DOCKER_PKGS=""
-if [ "$INCLUDE_DOCKER" == "yes" ]; then
-    echo -e "${YELLOW}🐳 已开启 Docker 支持，正在追加相关依赖包...${NC}"
-    DOCKER_PKGS="luci-app-dockerman dockerd docker-compose"
-fi
+# =========================================================
+# 5. 执行 ImmortalWrt 镜像构建
+# =========================================================
+echo "🚀 开始编译固件..."
+make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi" ROOTFS_PARTSIZE="$ROOTFS_SIZE"
 
-# 合并所有包
-PACKAGES="$BASE_PKGS $THEME_PKGS $NET_PKGS $PROXY_PKGS $DOCKER_PKGS $CUSTOM_PACKAGES"
-
-# >>> 5. OpenClash 核心预集成 (优化版) <<<
-if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
-    echo -e "${YELLOW}⬇️ 正在为 OpenClash 准备核心文件...${NC}"
-    CORE_PATH="files/etc/openclash/core"
-    mkdir -p "$CORE_PATH"
-    
-    # Github Actions 在海外，不需要使用国内镜像代理，直连更稳定且速度极快
-    META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
-    
-    # 下载并解压，增加超时到30秒，重试3次
-    if wget -q --show-progress -T 30 -t 3 -O- "$META_URL" | tar xOvz > "$CORE_PATH/clash_meta"; then
-        chmod +x "$CORE_PATH/clash_meta"
-        echo -e "${GREEN}✅ Meta 核心预装成功${NC}"
-    else
-        echo -e "${YELLOW}⚠️ 核心下载失败或超时，编译将继续，请稍后在路由后台手动更新。${NC}"
-    fi
-fi
-
-# >>> 6. 执行镜像打包 <<<
-echo -e "${BLUE}🛠️ 正在调用镜像构建器 (使用多核加速)...${NC}"
-
-# 自动获取 CPU 核心数加速打包进程
-make image PROFILE="generic" \
-           PACKAGES="$PACKAGES" \
-           FILES="files" \
-           ROOTFS_PARTSIZE=${ROOTFS_SIZE:-1024} \
-           -j$(nproc)
-
-# >>> 7. 结束提示 <<<
-echo "========================================================="
-echo -e "🎉 [$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN}固件编译成功！${NC}"
-echo -e "📂 固件存放位置: ${BLUE}bin/targets/x86/64/${NC}"
-echo "========================================================="
+echo "✅ 编译完成！"
