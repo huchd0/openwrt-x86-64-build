@@ -1,25 +1,25 @@
 name: 🚀 ImmortalWrt-Embedded-Custom (通用定制构建)
 
-于:
+on:
   workflow_dispatch:
     inputs:
       arch:
         description: '1. 架构(Arch)* (如: ramips-mt7621)'
         required: true
-        默认: 'ramips-mt7621'
+        default: 'ramips-mt7621'
       device_profile:
         description: '2. 设备代号(Profile)* (如: jdcloud_re-sp-01b)'
         required: true
-        默认: 'jdcloud_re-sp-01b'
+        default: 'jdcloud_re-sp-01b'
       brand:
         description: '3. 品牌 (选填，防砖双保险)'
         required: false
-        默认: ''
+        default: ''
       build_mode:
         description: '4. 模式: Lite(丐版) / Extroot(智能U盘扩容) / Deluxe(豪华版)'
         required: true
-        默认: 'Extroot'
-        输入: choice
+        default: 'Extroot'
+        type: choice
         options:
           - 'Deluxe'
           - 'Extroot'
@@ -27,8 +27,8 @@ name: 🚀 ImmortalWrt-Embedded-Custom (通用定制构建)
       openwrt_version:
         description: '5. 选择主线版本'
         required: true
-        默认: 'Auto'
-        输入: choice
+        default: 'Auto'
+        type: choice
         options:
           - 'Auto'
           - '25.12.0-rc1'
@@ -38,7 +38,7 @@ name: 🚀 ImmortalWrt-Embedded-Custom (通用定制构建)
       custom_router_ip:
         description: '6. 固件默认管理 IP'
         required: true
-        默认: '192.168.100.1'
+        default: '192.168.100.1'
 
 jobs:
   build:
@@ -104,7 +104,7 @@ jobs:
             
             > 💡 **Extroot 扩容模式说明**: 
             > 刷入后，请在路由器**通电开机前**插上 U 盘。系统会自动将其格式化为 ext4 并挂载为系统空间，随后会自动重启一次。重启后即可拥有 U 盘的无限空间！
-          文件: |
+          files: |
             bin/targets/*/*/*.bin
             bin/targets/*/*/*.img.gz
             bin/targets/*/*/sha256sums
