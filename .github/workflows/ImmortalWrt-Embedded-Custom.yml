@@ -1,46 +1,44 @@
 name: 🚀 ImmortalWrt-Embedded-Custom (通用定制构建)
 
-on:
+于:
   workflow_dispatch:
     inputs:
       arch:
         description: '1. 架构(Arch)* (如: ramips-mt7621)'
         required: true
-        default: 'ramips-mt7621'
+        默认: 'ramips-mt7621'
       device_profile:
         description: '2. 设备代号(Profile)* (如: jdcloud_re-sp-01b)'
         required: true
-        default: 'jdcloud_re-sp-01b'
+        默认: 'jdcloud_re-sp-01b'
       brand:
         description: '3. 品牌 (选填，防砖双保险)'
         required: false
-        default: ''
+        默认: ''
       build_mode:
         description: '4. 模式: Lite(丐版) / Extroot(智能U盘扩容) / Deluxe(豪华版)'
         required: true
-        default: 'Extroot'
-        type: choice
+        默认: 'Extroot'
+        输入: choice
         options:
           - 'Deluxe'
           - 'Extroot'
           - 'Lite'
       openwrt_version:
         description: '5. 选择主线版本'
-        required: false
-        default: 'Auto'
-        type: choice
+        required: true
+        默认: 'Auto'
+        输入: choice
         options:
           - 'Auto'
-          - '24.10.5'
           - '25.12.0-rc1'
-      custom_version:
-        description: '6. 【时光机】手动填入旧版本'
-        required: false
-        default: ''
+          - '24.10.5'
+          - '23.05.4'
+          - '21.02.7'
       custom_router_ip:
-        description: '7. 固件默认管理 IP'
+        description: '6. 固件默认管理 IP'
         required: true
-        default: '192.168.100.1'
+        默认: '192.168.100.1'
 
 jobs:
   build:
@@ -59,9 +57,7 @@ jobs:
           CLEAN_PROFILE=$(echo "${{ inputs.device_profile }}" | xargs)
           CLEAN_BRAND=$(echo "${{ inputs.brand }}" | xargs)
           
-          if [ -n "${{ inputs.custom_version }}" ]; then
-            SELECTED_VER=$(echo "${{ inputs.custom_version }}" | xargs)
-          elif [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
+          if [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
             LATEST=$(curl -sL "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100&name=${CLEAN_ARCH}-openwrt-" | \
               jq -r '.results[].name' | grep -v "SNAPSHOT" | grep -E "[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sort -V | tail -n 1 | sed "s/${CLEAN_ARCH}-openwrt-//")
             SELECTED_VER="${LATEST:-24.10.5}"
@@ -108,7 +104,7 @@ jobs:
             
             > 💡 **Extroot 扩容模式说明**: 
             > 刷入后，请在路由器**通电开机前**插上 U 盘。系统会自动将其格式化为 ext4 并挂载为系统空间，随后会自动重启一次。重启后即可拥有 U 盘的无限空间！
-          files: |
+          文件: |
             bin/targets/*/*/*.bin
             bin/targets/*/*/*.img.gz
             bin/targets/*/*/sha256sums
