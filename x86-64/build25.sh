@@ -5,6 +5,22 @@ set -e
 echo "开始执行自定义构建脚本 build25.sh..."
 
 # =========================================================
+# [新增] 0. 自定义底层固件参数 (锁定 64MB 内核分区)
+# =========================================================
+echo "⚙️ 正在精简固件配置并锁定内核分区大小..."
+cat >> .config <<EOF
+CONFIG_TARGET_KERNEL_PARTSIZE=64
+CONFIG_TARGET_ROOTFS_EXT4FS=n
+CONFIG_TARGET_ROOTFS_TARGZ=n
+CONFIG_VMDK_IMAGES=n
+CONFIG_VDI_IMAGES=n
+CONFIG_VHDX_IMAGES=n
+CONFIG_QCOW2_IMAGES=n
+CONFIG_ISO_IMAGES=n
+EOF
+echo "✅ 底层配置参数写入完成。"
+
+# =========================================================
 # 1. 定义基础插件与依赖 (针对 x86-64 优化)
 # =========================================================
 # 包含基础语言包、挂载工具、网卡驱动 (e1000e, igb, r8169) 以及 OpenClash 必需依赖
@@ -100,6 +116,7 @@ echo "INCLUDE_DOCKER='$INCLUDE_DOCKER'" >> files/etc/config/build_env.txt
 # 5. 执行 ImmortalWrt 镜像构建
 # =========================================================
 echo "🚀 开始编译固件..."
-make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi" ROOTFS_PARTSIZE="$ROOTFS_SIZE"
+# [新增] 在打包参数中强制加入 KERNEL_PARTSIZE=64
+make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
 
 echo "✅ 编译完成！"
