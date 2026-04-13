@@ -270,18 +270,6 @@ ALL_PKGS=(
     "${PKG_CLASH_DEPS[@]}"
 )
 PACKAGES="${ALL_PKGS[*]}"
-    "libcap-bin"
-    "ca-certificates"
-)
-
-ALL_PKGS=(
-    "${PKG_CORE[@]}"
-    "${PKG_TOOL[@]}"
-    "${PKG_DISK[@]}"
-    "${PKG_SHARE[@]}"
-    "${PKG_CLASH_DEPS[@]}"
-)
-PACKAGES="${ALL_PKGS[*]}"
 
 # ==========================================
 # 8. 开始打包
