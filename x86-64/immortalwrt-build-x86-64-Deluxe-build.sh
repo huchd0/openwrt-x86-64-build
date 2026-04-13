@@ -354,6 +354,7 @@ PKG_DISK=(
     "block-mount"
     "blkid"
     "lsblk"
+    "parted"
     "fdisk"
     "e2fsprogs"
     "kmod-usb-storage"
@@ -362,6 +363,8 @@ PKG_DISK=(
     "kmod-fs-ntfs3"
     "kmod-fs-vfat"
     "kmod-fs-exfat"
+    "luci-i18n-diskman-zh-cn"
+    "luci-i18n-filemanager-zh-cn"
 )
 
 PKG_DEPENDS=(
