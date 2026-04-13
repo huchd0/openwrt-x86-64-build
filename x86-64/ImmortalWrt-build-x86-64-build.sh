@@ -160,7 +160,6 @@ PKG_CORE=(
     "luci-theme-argon"
     "luci-app-openclash"
     "luci-i18n-package-manager-zh-cn"
-    "luci-i18n-opkg-zh-cn"
 )
 
 PKG_TOOL=(
