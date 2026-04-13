@@ -28,11 +28,11 @@ jobs:
           INPUT_VER="${{ inputs.openwrt_version }}"
           EVENT_NAME="${{ github.event_name }}"
           
-          # 1. 获取官方最新稳定版号 (加入 Token 验证，防止 API 频率限制报错)
+          # 1. 获取官方最新稳定版号 (保留了你的 -v 'rc' 过滤，防止抓到测试版)
           OFFICIAL_LATEST=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/openwrt/openwrt/releases" | grep '"tag_name":' | grep -v 'rc' | head -n 1 | cut -d '"' -f 4 | sed 's/v//')
           
-          # 2. 获取本地最后发布
-          MY_LATEST=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases/latest" | grep '"name":' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || echo "0.0.0")
+          # 2. 【核心修改】获取本地最后发布：拉取所有 releases，专门筛选标题带有 "OpenWrt" 的记录
+          MY_LATEST=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/releases" | grep '"name":' | grep 'OpenWrt' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || echo "0.0.0")
 
           echo "官方最新版本: $OFFICIAL_LATEST"
           echo "本地最后发布: $MY_LATEST"
@@ -75,7 +75,6 @@ jobs:
         if: steps.check_version.outputs.SHOULD_BUILD == 'true'
         env:
           ROOTFS_SIZE: '1024'
-          # MANAGEMENT_IP 从文件顶部的全局 env 读取，确保统一
         run: |
           # 🌟 核心防护：抹除 Windows 换行符
           sed -i 's/\r$//' OpenWrt-x86-64-build.sh
@@ -89,24 +88,30 @@ jobs:
           
           ./OpenWrt-x86-64-build.sh
 
-      - name: 生成发布标签
+      - name: 生成发布时间变量
         if: steps.check_version.outputs.SHOULD_BUILD == 'true'
-        run: echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
+        run: echo "BUILD_TIME=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_ENV
 
-      - name: 自动发布到 Releases
+      - name: 🗑️ 清理旧的同名 Release (确保完全覆盖不残留)
+        if: steps.check_version.outputs.SHOULD_BUILD == 'true'
+        run: |
+          # 使用 GitHub CLI 删除旧的固定标签，忽略报错（首次运行可能不存在）
+          gh release delete OpenWrt-Latest -y --cleanup-tag || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🚀 自动发布到 Releases (覆盖模式)
         if: steps.check_version.outputs.SHOULD_BUILD == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.release_tag }}
-          name: OpenWrt ${{ env.OWRT_VERSION }} 自动更新版
+          tag_name: OpenWrt-Latest  # 【核心修改】使用固定的 Tag
+          name: OpenWrt ${{ env.OWRT_VERSION }} 自动更新版 # 标题包含版本号，供下次 grep 识别
           files: imagebuilder/output-firmware/*
           body: |
-            **🤖 OpenWrt 自动mix终极定制化固件**
+            **🤖 OpenWrt 最新定制化固件自动更新**
             - **版本**: `${{ env.OWRT_VERSION }}`
             - **固件大小**: 1GB
-            - **构建时间**: `${{ env.release_tag }}`
+            - **构建时间**: `${{ env.BUILD_TIME }}`
             - **管理 IP**: `${{ env.MANAGEMENT_IP }}`
             - **硬盘挂载**: 智能抓取 sda3 或 nvme0n1p3 动态绑定 (为 Docker 预留)
             - **核心**: 已内置 OpenClash Meta 核心与 Argon 主题
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
