@@ -74,7 +74,7 @@ jobs:
       - name: Create Info Doc
         run: |
           cat > ${{ github.workspace }}/router-info.md <<EOF
-          ## 🌟 ImmortalWrt ${{ env.FINAL_VERSION }} 纯离线防崩定制版
+          ## 🌟 ImmortalWrt ${{ env.FINAL_VERSION }} 定制版
           
           - 🏠 **管理地址**: http://${{ inputs.custom_router_ip }}
           - 👤 **用户名**: root
@@ -82,7 +82,7 @@ jobs:
           - 📦 **分区配置**: Kernel: 64MB | RootFS: ${{ inputs.profile }}MB
           - ⚙️ **核心集成**: OpenClash (Meta核心), Argon 主题
           - 🛡️ **底层优化**: 纯离线防崩注入, 单/多网口智能分配 (eth0为WAN)
-          - 💾 **磁盘特性**: 首次开机自动扩展并挂载 sda3 (不破坏已有数据)
+          - 💾 **磁盘特性**: 首次开机自动挂载 sda3 (不破坏已有数据)
           EOF
 
       - name: Upload Release
