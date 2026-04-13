@@ -243,7 +243,7 @@ chmod +x files/etc/uci-defaults/99-custom-setup
 
 
 # ==========================================
-# --- E. 终端神器 ttyd 联网自动补装 ---
+# --- E. 终端神器 ttyd 联网自动补装 (双引擎自适应版) ---
 # ==========================================
 cat << 'EOF_TTYD' > files/etc/init.d/install-ttyd
 #!/bin/sh /etc/rc.common
@@ -252,8 +252,14 @@ start() {
     WAIT_NET=0
     while [ $WAIT_NET -lt 60 ]; do
         if ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1; then
-            apk update
-            apk add luci-app-ttyd luci-i18n-ttyd-zh-cn
+            # 智能嗅探包管理器
+            if command -v apk >/dev/null 2>&1; then
+                apk update
+                apk add luci-app-ttyd luci-i18n-ttyd-zh-cn
+            elif command -v opkg >/dev/null 2>&1; then
+                opkg update
+                opkg install luci-app-ttyd luci-i18n-ttyd-zh-cn
+            fi
             rm -f /etc/init.d/install-ttyd
             break
         fi
@@ -266,8 +272,9 @@ chmod +x files/etc/init.d/install-ttyd
 mkdir -p files/etc/rc.d
 ln -s ../init.d/install-ttyd files/etc/rc.d/S99install-ttyd
 
+
 # ==========================================
-# --- F. 优雅内置：全自动静默升级与定时任务 ---
+# --- F. 优雅内置：全自动静默升级与定时任务 (双引擎自适应版) ---
 # ==========================================
 echo "正在生成自动升级脚本与定时任务..."
 
@@ -281,13 +288,42 @@ fi
 
 echo "===== Auto Upgrade Start: $(date) =====" >> "$LOGFILE"
 
-openclash_before=$(apk info -v luci-app-openclash 2>/dev/null)
+# 1. 嗅探当前环境
+if command -v apk >/dev/null 2>&1; then
+    PKG_ENGINE="apk"
+    openclash_before=$(apk info -v luci-app-openclash 2>/dev/null)
+elif command -v opkg >/dev/null 2>&1; then
+    PKG_ENGINE="opkg"
+    openclash_before=$(opkg list-installed luci-app-openclash 2>/dev/null)
+else
+    echo "未找到支持的包管理器！" >> "$LOGFILE"
+    exit 1
+fi
 
-apk update >> "$LOGFILE" 2>&1
-apk upgrade >> "$LOGFILE" 2>&1
+echo "使用 $PKG_ENGINE 引擎执行升级..." >> "$LOGFILE"
 
-openclash_after=$(apk info -v luci-app-openclash 2>/dev/null)
+# 2. 根据引擎执行相应的安全升级逻辑
+if [ "$PKG_ENGINE" = "apk" ]; then
+    apk update >> "$LOGFILE" 2>&1
+    apk upgrade >> "$LOGFILE" 2>&1
+    openclash_after=$(apk info -v luci-app-openclash 2>/dev/null)
+    
+elif [ "$PKG_ENGINE" = "opkg" ]; then
+    opkg update >> "$LOGFILE" 2>&1
+    for pkg in $(opkg list-upgradable | awk '{print $1}'); do
+        case $pkg in
+            base-files|busybox|dnsmasq*|dropbear|firewall*|fstools|kernel|kmod-*|libc|luci|mtd|opkg|procd|uhttpd)
+                ;;
+            *)
+                echo "升级: $pkg" >> "$LOGFILE"
+                opkg upgrade $pkg >> "$LOGFILE" 2>&1
+                ;;
+        esac
+    done
+    openclash_after=$(opkg list-installed luci-app-openclash 2>/dev/null)
+fi
 
+# 3. OpenClash 守护重启逻辑
 if [ -n "$openclash_before" ] && [ "$openclash_before" != "$openclash_after" ]; then
     echo "OpenClash 已升级 ($openclash_before -> $openclash_after)，正在重启服务..." >> "$LOGFILE"
     /etc/init.d/openclash restart >> "$LOGFILE" 2>&1
