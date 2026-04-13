@@ -19,7 +19,6 @@ echo "CONFIG_TARGET_KERNEL_PARTSIZE=64" >> .config
 sed -i '/CONFIG_TARGET_ROOTFS_PARTSIZE/d' .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE" >> .config
 
-# 强制禁用不必要的格式，大幅度缩短编译时间，避免 I/O 爆炸
 echo "CONFIG_TARGET_ROOTFS_EXT4FS=n" >> .config
 echo "CONFIG_TARGET_ROOTFS_TARGZ=n" >> .config
 echo "CONFIG_VMDK_IMAGES=n" >> .config
@@ -30,46 +29,19 @@ echo "CONFIG_ISO_IMAGES=n" >> .config
 echo "CONFIG_GRUB_IMAGES=n" >> .config
 
 # ==========================================
-# 3. 极速拉取 OpenClash (云端预处理)
+# 3. 预埋 OpenClash Meta 核心
 # ==========================================
-mkdir -p files/root files/etc/uci-defaults files/etc/openclash/core files/etc/config
+# OpenClash 本体将通过 ImageBuilder 原生编译
+mkdir -p files/etc/openclash/core files/etc/uci-defaults
 
-echo ">>> 正在拉取 OpenClash 插件与 Meta 核心..."
-OC_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.ipk" | cut -d '"' -f 4)
-[ -n "$OC_URL" ] && wget -qO files/root/luci-app-openclash.ipk "$OC_URL"
-
+echo ">>> 正在预埋 OpenClash Meta 核心..."
 META_CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz"
 wget -qO- "$META_CORE_URL" | tar -zxf - -C files/etc/openclash/core/
 mv files/etc/openclash/core/clash files/etc/openclash/core/clash_meta 2>/dev/null || true
 chmod +x files/etc/openclash/core/clash_meta
 
 # ==========================================
-# 4. 底层网络配置强制注入 (防崩保障)
-# ==========================================
-cat << EOF > files/etc/config/network
-config interface 'loopback'
-	option device 'lo'
-	option proto 'static'
-	option ipaddr '127.0.0.1'
-	option netmask '255.0.0.0'
-
-config globals 'globals'
-	option ula_prefix 'fdc9:e120:3917::/48'
-
-config device
-	option name 'br-lan'
-	option type 'bridge'
-	list ports 'eth0'
-
-config interface 'lan'
-	option device 'br-lan'
-	option proto 'static'
-	option ipaddr '$IP_ADDR'
-	option netmask '255.255.255.0'
-EOF
-
-# ==========================================
-# 5. 编写开机自启脚本
+# 4. 编写开机自启脚本
 # ==========================================
 cat << 'EOF' > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
@@ -81,31 +53,46 @@ uci set network.lan.ipaddr='REPLACE_IP_ADDR'
 uci set network.lan.netmask='255.255.255.0'
 uci set system.@system[0].hostname='Tanxm'
 
-# --- 2. 网口分配 (eth0=WAN, 其余=LAN) ---
+# --- 2. 重构级：严格网口分配 ---
+# 【粉碎重建逻辑】：暴力删除旧的设备定义
+while uci -q delete network.@device[0]; do :; done
+
+# 重新建立干净的 br-lan 桥接设备
+uci set network.br_lan=device
+uci set network.br_lan.name='br-lan'
+uci set network.br_lan.type='bridge'
+
 INTERFACES=$(ls /sys/class/net | grep -E '^e(th|n)' | sort)
 INT_COUNT=$(echo "$INTERFACES" | wc -w)
 
-uci del_list network.@device[0].ports 2>/dev/null
-uci set network.lan.device='br-lan'
-
 if [ "$INT_COUNT" -gt 1 ]; then
+    # 【多口模式】：WAN / WAN6 独占 eth0
     uci set network.wan=interface
     uci set network.wan.device='eth0'
     uci set network.wan.proto='dhcp'
+    
     uci set network.wan6=interface
     uci set network.wan6.device='eth0'
     uci set network.wan6.proto='dhcpv6'
+    
+    # 将剩下的物理口，全部加入桥接
     for iface in $INTERFACES; do
-        [ "$iface" != "eth0" ] && uci add_list network.@device[0].ports="$iface"
+        if [ "$iface" != "eth0" ]; then
+            uci add_list network.br_lan.ports="$iface"
+        fi
     done
 else
+    # 【单口模式】：删除 WAN，唯一的 eth0 归 LAN
     uci delete network.wan 2>/dev/null
     uci delete network.wan6 2>/dev/null
-    uci add_list network.@device[0].ports='eth0'
+    uci add_list network.br_lan.ports='eth0'
 fi
+
+# 确保 LAN 接口绑定在新的 br-lan 上
+uci set network.lan.device='br-lan'
 uci commit network
 
-# --- 3. sda3 智能挂载 (不再执行 fdisk 和 mkfs) ---
+# --- 3. sda3 智能挂载 (不强制格式化) ---
 REAL_UUID=$(blkid -s UUID -o value /dev/sda3 2>/dev/null)
 if [ -n "$REAL_UUID" ] && ! uci show fstab | grep -q "$REAL_UUID"; then
     echo "检测到存在 sda3，正在配置开机自动挂载..."
@@ -116,7 +103,7 @@ if [ -n "$REAL_UUID" ] && ! uci show fstab | grep -q "$REAL_UUID"; then
     uci commit fstab
 fi
 
-# --- 4. BBR 与 NTP 优化 ---
+# --- 4. 优化：BBR, NTP 与 国内源 ---
 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
 echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
 
@@ -127,10 +114,15 @@ uci set system.@system[0].timezone='CST-8'
 uci set system.@system[0].zonename='Asia/Shanghai'
 uci commit system
 
-# --- 5. 纯离线安装预置插件 ---
-if [ -f "/root/luci-app-openclash.ipk" ]; then
-    opkg install /root/luci-app-openclash.ipk
-    rm -f /root/luci-app-openclash.ipk
+# 路由器落地后自动替换为国内镜像源 (兼容 apk 和 opkg)
+if command -v apk >/dev/null 2>&1; then
+    if [ -d "/etc/apk/repositories.d" ]; then
+        sed -i 's/downloads.immortalwrt.org/mirrors.ustc.edu.cn\/immortalwrt/g' /etc/apk/repositories.d/*.list 2>/dev/null || true
+    fi
+elif command -v opkg >/dev/null 2>&1; then
+    if [ -f "/etc/opkg/distfeeds.conf" ]; then
+        sed -i 's/downloads.immortalwrt.org/mirrors.ustc.edu.cn\/immortalwrt/g' /etc/opkg/distfeeds.conf 2>/dev/null || true
+    fi
 fi
 
 rm -f /etc/uci-defaults/99-custom-setup
@@ -142,7 +134,18 @@ sed -i "s|REPLACE_IP_ADDR|$IP_ADDR|g" files/etc/uci-defaults/99-custom-setup
 chmod +x files/etc/uci-defaults/99-custom-setup
 
 # ==========================================
-# 6. 模块化定义软件包 (简单纯净版)
+# 5. 云端加速：替换 ImageBuilder 构建源
+# ==========================================
+echo ">>> 正在优化 ImageBuilder 构建源为腾讯云 (加速拉取)..."
+if [ -f "repositories.conf" ]; then
+    sed -i 's/downloads.immortalwrt.org/mirrors.cloud.tencent.com\/immortalwrt/g' repositories.conf
+fi
+if [ -d "repositories.d" ]; then
+    sed -i 's/downloads.immortalwrt.org/mirrors.cloud.tencent.com\/immortalwrt/g' repositories.d/*.list
+fi
+
+# ==========================================
+# 6. 模块化定义软件包
 # ==========================================
 echo ">>> 定义软件包..."
 
@@ -155,6 +158,9 @@ PKG_CORE=(
     "luci-i18n-base-zh-cn"
     "luci-i18n-firewall-zh-cn"
     "luci-theme-argon"
+    "luci-app-openclash"
+    "luci-i18n-package-manager-zh-cn"
+    "luci-i18n-opkg-zh-cn"
 )
 
 PKG_TOOL=(
@@ -162,7 +168,7 @@ PKG_TOOL=(
     "curl"
     "coreutils-nohup"
     "unzip"
-    "luci-i18n-ttyd-zh-cn" # 终端工具
+    "luci-i18n-ttyd-zh-cn"
 )
 
 PKG_DISK=(
@@ -170,14 +176,14 @@ PKG_DISK=(
     "lsblk"
     "parted"
     "fdisk"
-    "e2fsprogs"            # ext4 格式化工具
+    "e2fsprogs"            
     "block-mount"
-    "luci-i18n-diskman-zh-cn"     # 磁盘管理 UI
-    "luci-i18n-filemanager-zh-cn" # 文件管理 UI
+    "luci-i18n-diskman-zh-cn"
+    "luci-i18n-filemanager-zh-cn"
 )
 
 PKG_SHARE=(
-    "luci-i18n-ksmbd-zh-cn" # 轻量级网络共享
+    "luci-i18n-ksmbd-zh-cn"
 )
 
 PKG_CLASH_DEPS=(
@@ -193,7 +199,6 @@ PKG_CLASH_DEPS=(
     "ca-certificates"
 )
 
-# 组合所有软件包
 ALL_PKGS=(
     "${PKG_CORE[@]}"
     "${PKG_TOOL[@]}"
@@ -204,23 +209,9 @@ ALL_PKGS=(
 PACKAGES="${ALL_PKGS[*]}"
 
 # ==========================================
-# 6.5 终极加速：替换 ImageBuilder 构建源为腾讯云全球镜像
-# ==========================================
-echo ">>> 正在优化 ImageBuilder 底层构建源，加速云端拉取..."
-
-# 针对 23.05 及以下版本 (opkg)
-if [ -f "repositories.conf" ]; then
-    sed -i 's/downloads.immortalwrt.org/mirrors.cloud.tencent.com\/immortalwrt/g' repositories.conf
-fi
-
-# 针对 24.10 及以上版本 (apk)
-if [ -d "repositories.d" ]; then
-    sed -i 's/downloads.immortalwrt.org/mirrors.cloud.tencent.com\/immortalwrt/g' repositories.d/*.list
-fi
-
-
-# ==========================================
-# 7. 开始打包 (原有的代码保持不变)
+# 7. 开始打包
 # ==========================================
 echo ">>> 正在执行 Make Image 编译..."
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi"
+
+echo "========== 固件构建圆满完成 =========="
