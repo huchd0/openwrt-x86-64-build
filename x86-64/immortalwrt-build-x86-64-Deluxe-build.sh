@@ -31,7 +31,6 @@ echo ">>> 2. 准备初始化文件夹结构 <<<"
 mkdir -p files/root files/etc/uci-defaults files/etc/init.d files/usr/bin files/etc/openclash/core files/lib/firmware/mediatek/mt7925
 
 echo ">>> 3. [极限并发] 缓存提取与多线程切片下载组件 <<<"
-# 智能下载：有缓存秒拷，无缓存动用 aria2 开启 4 线程多路并发防限速
 smart_dl() {
     local URL=$1
     local DEST=$2
@@ -59,7 +58,6 @@ echo "开启并发下载池..."
 ( [ -n "$ARGON_URL" ] && smart_dl "$ARGON_URL" files/root/luci-theme-argon.apk ) &
 ( smart_dl "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz" files/etc/openclash/core/meta.tar.gz ) &
 
-# 【优化】换用 kernel.org 纯净源避免 GitLab 抽风
 ( smart_dl "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin" files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin ) &
 ( smart_dl "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin" files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin ) &
 ( smart_dl "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin" files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin ) &
@@ -101,7 +99,7 @@ EOF_UPGRADE
 chmod +x files/usr/bin/upg
 
 
-echo ">>> 5. 生成开机首启初始化脚本 (含自动拨号与 Docker 网络注入) <<<"
+echo ">>> 5. 生成开机首启初始化脚本 (纯净官方源版本) <<<"
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
 
@@ -155,8 +153,8 @@ uci commit network
 
 # C. 强制挂载大分区
 if ! lsblk | grep -q sda3; then
-    echo -e "w" | fdisk /dev/sda >/dev/null 2>&1
-    echo -e "n\n3\n\n\nw" | fdisk /dev/sda >/dev/null 2>&1
+    echo -e "w\n" | fdisk /dev/sda >/dev/null 2>&1
+    echo -e "n\n3\n\n\nw\n" | fdisk /dev/sda >/dev/null 2>&1
     partprobe /dev/sda >/dev/null 2>&1 || true
     sleep 3
     if lsblk | grep -q sda3; then mkfs.ext4 -F /dev/sda3 >/dev/null 2>&1; fi
@@ -203,10 +201,6 @@ fi
 echo "0 2 */2 * * /usr/bin/upg" >> /etc/crontabs/root
 /etc/init.d/cron restart 2>/dev/null || true
 
-if [ -d "/etc/apk/repositories.d" ]; then
-    sed -i 's/downloads.openwrt.org/mirrors.ustc.edu.cn\/openwrt/g' /etc/apk/repositories.d/*.list
-fi
-
 (
     WAIT_NET=0
     while [ \$WAIT_NET -lt 30 ]; do
@@ -239,10 +233,7 @@ RAW_PACKAGES="
     block-mount blkid lsblk parted fdisk e2fsprogs kmod-usb-storage kmod-usb-storage-uas kmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-vfat kmod-fs-exfat
     coreutils-nohup coreutils-base64 coreutils-sort bash jq curl ca-bundle libcap libcap-bin ruby ruby-yaml unzip
     ip-full iptables-mod-tproxy iptables-mod-extra kmod-tun kmod-inet-diag kmod-nft-tproxy kmod-igc kmod-igb kmod-r8169 iwinfo
-    
-    # 【核心减负】去掉了巨无霸 bluez-daemon 及其引发的 dbus 等 400+ 桌面级依赖，只保留核心硬件驱动
     -wpad-basic-mbedtls -wpad-basic-wolfssl wpad-openssl kmod-mt7925e kmod-mt7925-firmware kmod-btusb
-    
     nano htop ethtool tcpdump mtr conntrack iftop screen collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool collectd-mod-iwinfo
     luci-app-ksmbd luci-i18n-ksmbd-zh-cn luci-app-nlbwmon luci-i18n-nlbwmon-zh-cn luci-app-statistics luci-i18n-statistics-zh-cn
 "
@@ -253,6 +244,13 @@ if [ "$INCLUDE_DOCKER" = "yes" ]; then
 fi
 
 PACKAGES=$(echo "$RAW_PACKAGES" | sed 's/#.*//g' | tr -s ' \n' ' ')
+
+echo ">>> 6.5 [构建加速] 仅针对 GitHub 编译机优化 DNS 与寻址 <<<"
+# 强制 IPv4 优先，跳过 GitHub Actions 常见的 IPv6 寻址超时
+echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf 2>/dev/null || true
+# 静态解析官方源 IP，跳过 DNS 查询耗时 (仅对编译环境生效，固件依旧是官方域名)
+echo "104.21.75.148 downloads.immortalwrt.org" >> /etc/hosts
+echo "172.67.142.152 sysupgrade.immortalwrt.org" >> /etc/hosts
 
 echo ">>> 7. [多核极速] 开始 Make Image 打包 <<<"
 make image -j$(nproc) PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi-Deluxe" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
