@@ -4,7 +4,6 @@ set -e
 # 接收 GitHub Actions 传来的环境变量
 ROOTFS_SIZE=${ROOTFS_SIZE:-1024}
 MANAGEMENT_IP=${MANAGEMENT_IP:-192.168.100.1}
-INCLUDE_DOCKER=${INCLUDE_DOCKER:-yes}
 
 if [[ ! "$MANAGEMENT_IP" == *"/"* ]]; then
     MANAGEMENT_IP="${MANAGEMENT_IP}/24"
@@ -27,8 +26,8 @@ echo "CONFIG_GRUB_IMAGES=n" >> .config
 echo "=== 2. 准备初始化文件夹 ==="
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/init.d
-mkdir -p files/usr/bin
-mkdir -p files/etc/crontabs
+mkdir -p files/usr/bin         # <--- 修复点：提前创建 usr/bin 目录
+mkdir -p files/etc/crontabs    # <--- 修复点：提前创建定时任务目录
 
 echo "=== 3. 下载必要核心与驱动固件 ==="
 
@@ -54,45 +53,38 @@ cat << 'EOF_WIFI' > files/etc/init.d/wifi-auto-patch
 START=99
 
 start() {
-    # 将探测和修改逻辑放进后台 ( ) & 执行，绝对不阻塞路由器开机速度
-    (
-        WAIT=0
-        while [ $WAIT -lt 30 ]; do
-            wifi config
-            if uci get wireless.radio0 >/dev/null 2>&1; then
-                break
-            fi
-            sleep 2
-            WAIT=$((WAIT+1))
-        done
-
+    WAIT=0
+    while [ $WAIT -lt 30 ]; do
+        wifi config
         if uci get wireless.radio0 >/dev/null 2>&1; then
-            uci set wireless.radio0.band='5g'
-            uci set wireless.radio0.channel='149'
-            uci set wireless.radio0.htmode='EHT80'
-            uci set wireless.radio0.country='AU'
-            uci set wireless.radio0.cell_density='0'
-            uci set wireless.radio0.txpower='23'
-            
-            for iface in $(uci show wireless | grep '=wifi-iface' | cut -d'.' -f2 | cut -d'=' -f1); do
-                uci set wireless.${iface}.ssid='mywifi7'
-                uci set wireless.${iface}.encryption='sae-mixed'
-                uci set wireless.${iface}.key='Aa666666'
-                uci set wireless.${iface}.ieee80211w='1'
-                uci set wireless.${iface}.network='lan'
-                uci set wireless.${iface}.mode='ap'
-            done
-            
-            uci commit wireless
-            
-            # 【核心修复】强制重启无线服务，让 mywifi7 立刻生效！
-            sleep 2
-            wifi reload
+            break
         fi
+        sleep 2
+        WAIT=$((WAIT+1))
+    done
+
+    if uci get wireless.radio0 >/dev/null 2>&1; then
+        uci set wireless.radio0.band='5g'
+        uci set wireless.radio0.channel='149'
+        uci set wireless.radio0.htmode='EHT80'
+        uci set wireless.radio0.country='AU'
+        uci set wireless.radio0.cell_density='0'
+        uci set wireless.radio0.txpower='23'
         
-        # 任务完成，自我销毁
-        rm -f /etc/init.d/wifi-auto-patch
-    ) &
+        for iface in $(uci show wireless | grep '=wifi-iface' | cut -d'.' -f2 | cut -d'=' -f1); do
+            uci set wireless.${iface}.ssid='mywifi7'
+            uci set wireless.${iface}.encryption='sae-mixed'
+            uci set wireless.${iface}.key='Aa666666'
+            uci set wireless.${iface}.ieee80211w='1'
+            uci set wireless.${iface}.network='lan'
+            uci set wireless.${iface}.mode='ap'
+        done
+        
+        uci commit wireless
+    fi
+    
+    sleep 1
+    rm -f /etc/init.d/wifi-auto-patch
 }
 EOF_WIFI
 chmod +x files/etc/init.d/wifi-auto-patch
@@ -221,35 +213,6 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     /etc/init.d/collectd restart
     
     touch /etc/collectd_inited
-fi
-
-# --- D2. Docker 自动化网络互通配置 ---
-if [ "$INCLUDE_DOCKER" = "yes" ]; then
-    [ ! -f "/etc/config/dockerd" ] && touch /etc/config/dockerd
-    uci set dockerd.globals=globals
-    uci set dockerd.globals.data_root='/mnt/sda3/docker'
-    uci commit dockerd
-
-    uci add firewall zone
-    uci set firewall.@zone[-1].name='docker'
-    uci set firewall.@zone[-1].network='docker0'
-    uci set firewall.@zone[-1].input='ACCEPT'
-    uci set firewall.@zone[-1].output='ACCEPT'
-    uci set firewall.@zone[-1].forward='ACCEPT'
-
-    uci add firewall forwarding
-    uci set firewall.@forwarding[-1].src='docker'
-    uci set firewall.@forwarding[-1].dest='lan'
-
-    uci add firewall forwarding
-    uci set firewall.@forwarding[-1].src='lan'
-    uci set firewall.@forwarding[-1].dest='docker'
-
-    uci add firewall forwarding
-    uci set firewall.@forwarding[-1].src='docker'
-    uci set firewall.@forwarding[-1].dest='wan'
-    
-    uci commit firewall
 fi
 
 if uci get luci.themes.Argon >/dev/null 2>&1; then
@@ -451,17 +414,6 @@ PKG_LUCI_APPS=(
     "luci-i18n-autoreboot-zh-cn"
 )
 
-# 动态加载 Docker 包
-PKG_DOCKER=()
-if [ "$INCLUDE_DOCKER" = "yes" ]; then
-    PKG_DOCKER=(
-        "dockerd"
-        "docker-compose"
-        "luci-app-dockerman"
-        "luci-i18n-dockerman-zh-cn"
-    )
-fi
-
 ALL_PKGS=(
     "${PKG_CORE[@]}"
     "${PKG_DISK[@]}"
@@ -471,7 +423,6 @@ ALL_PKGS=(
     "${PKG_MONITOR[@]}"
     "${PKG_HW_TOOLS[@]}"
     "${PKG_LUCI_APPS[@]}"
-    "${PKG_DOCKER[@]}"
 )
 
 PACKAGES="${ALL_PKGS[*]}"
