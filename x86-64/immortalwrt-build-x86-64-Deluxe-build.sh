@@ -4,12 +4,13 @@ set -e
 # 接收 GitHub Actions 传来的环境变量
 ROOTFS_SIZE=${ROOTFS_SIZE:-1024}
 MANAGEMENT_IP=${MANAGEMENT_IP:-192.168.100.1}
+INCLUDE_DOCKER=${INCLUDE_DOCKER:-yes}
 
 if [[ ! "$MANAGEMENT_IP" == *"/"* ]]; then
     MANAGEMENT_IP="${MANAGEMENT_IP}/24"
 fi
 
-echo ">>> 1. 自定义固件参数 (专属 J4125 互刷保护) <<<"
+echo "=== 1. 自定义固件参数 (互刷保护) ==="
 echo "CONFIG_TARGET_KERNEL_PARTSIZE=64" >> .config
 echo "CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE" >> .config
 
@@ -23,23 +24,13 @@ echo "CONFIG_QCOW2_IMAGES=n" >> .config
 echo "CONFIG_ISO_IMAGES=n" >> .config
 echo "CONFIG_GRUB_IMAGES=n" >> .config
 
-echo ">>> 2. 准备初始化文件夹 <<<"
-mkdir -p files/root
+echo "=== 2. 准备初始化文件夹 ==="
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/init.d
 mkdir -p files/usr/bin
+mkdir -p files/etc/crontabs
 
-echo ">>> 3. 下载第三方 APK 插件与核心组件 (离线准备) <<<"
-# 提前下载离线安装包，扔进 /root，彻底避开 Make Image 编译期依赖检查
-OPENCLASH_URL=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
-if [ -n "$OPENCLASH_URL" ]; then
-    wget -qO files/root/luci-app-openclash.apk "$OPENCLASH_URL"
-fi
-
-ARGON_URL=$(curl -s https://api.github.com/repos/jerrykuku/luci-theme-argon/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
-if [ -n "$ARGON_URL" ]; then
-    wget -qO files/root/luci-theme-argon.apk "$ARGON_URL"
-fi
+echo "=== 3. 下载必要核心与驱动固件 ==="
 
 echo "正在下载 OpenClash Meta 兼容版内核..."
 mkdir -p files/etc/openclash/core
@@ -51,46 +42,19 @@ rm -f files/etc/openclash/core/meta.tar.gz
 
 echo "正在注入 MT7925 官方底层固件..."
 mkdir -p files/lib/firmware/mediatek/mt7925
+
 wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin"
 wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
 wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
-echo ">>> 4. 编写全自动静默升级脚本 (防冲突独立文件) <<<"
-cat << 'EOF_UPGRADE' > files/usr/bin/upg
-#!/bin/sh
-LOGFILE="/root/upg.log"
-if [ -f "$LOGFILE" ] && [ $(wc -c < "$LOGFILE") -gt 1048576 ]; then
-    echo "日志过大，已清空重建" > "$LOGFILE"
-fi
-echo "===== Auto Upgrade Start: $(date) =====" >> "$LOGFILE"
+echo "=== 4. 编写全自动开机初始化脚本 ==="
 
-if command -v apk >/dev/null 2>&1; then
-    openclash_before=$(apk info -v luci-app-openclash 2>/dev/null)
-    apk update >> "$LOGFILE" 2>&1
-    apk upgrade >> "$LOGFILE" 2>&1
-    openclash_after=$(apk info -v luci-app-openclash 2>/dev/null)
-else
-    echo "仅支持 apk 包管理器。" >> "$LOGFILE"
-    exit 1
-fi
-
-if [ -n "$openclash_before" ] && [ "$openclash_before" != "$openclash_after" ]; then
-    echo "OpenClash 已升级，正在重启服务..." >> "$LOGFILE"
-    /etc/init.d/openclash restart >> "$LOGFILE" 2>&1
-fi
-echo "===== Auto Upgrade End: $(date) =====" >> "$LOGFILE"
-EOF_UPGRADE
-chmod +x files/usr/bin/upg
-
-
-echo ">>> 5. 编写全自动开机初始化脚本 <<<"
-
-# --- 🎯 智能后台 Wi-Fi 注入模块 ---
 cat << 'EOF_WIFI' > files/etc/init.d/wifi-auto-patch
 #!/bin/sh /etc/rc.common
 START=99
 
 start() {
+    # 将探测和修改逻辑放进后台 ( ) & 执行，绝对不阻塞路由器开机速度
     (
         WAIT=0
         while [ $WAIT -lt 30 ]; do
@@ -118,35 +82,41 @@ start() {
                 uci set wireless.${iface}.network='lan'
                 uci set wireless.${iface}.mode='ap'
             done
+            
             uci commit wireless
+            
+            # 【核心修复】强制重启无线服务，让 mywifi7 立刻生效！
+            sleep 2
+            wifi reload
         fi
         
-        /etc/init.d/wifi-auto-patch disable
+        # 任务完成，自我销毁
         rm -f /etc/init.d/wifi-auto-patch
     ) &
 }
 EOF_WIFI
 chmod +x files/etc/init.d/wifi-auto-patch
 
-# --- 🎯 首开机总控逻辑 ---
+
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
 
+# 开启 Wi-Fi 智能补全服务
 /etc/init.d/wifi-auto-patch enable
 
-# A1. 核心网络设置
+# --- A1. 核心网络设置 ---
 uci set network.lan.ipaddr='$MANAGEMENT_IP'
 uci delete network.@device[0].ports 2>/dev/null
 uci set network.lan.device='br-lan'
 uci delete network.lan.type 2>/dev/null
 
-# A2. 时区与专属主机名设置
+# --- A2. 强行设置时区与主机名 ---
 uci set system.@system[0].timezone='CST-8'
 uci set system.@system[0].zonename='Asia/Shanghai'
 uci set system.@system[0].hostname='Tanxm'
 uci commit system
 
-# B. 智能网口分配逻辑
+# --- B. 智能网口分配逻辑 ---
 INTERFACES=\$(ls /sys/class/net | grep -E '^eth[0-9]+' | sort)
 PORT_COUNT=\$(echo "\$INTERFACES" | wc -w)
 
@@ -170,7 +140,7 @@ else
 fi
 uci commit network
 
-# C. 强制挂载大分区
+# --- C. 智能大分区强制挂载保护 ---
 if ! lsblk | grep -q sda3; then
     echo -e "w" | fdisk /dev/sda >/dev/null 2>&1
     echo -e "n\n3\n\n\nw" | fdisk /dev/sda >/dev/null 2>&1
@@ -201,8 +171,9 @@ if [ -n "\$TARGET_UUID" ]; then
     mount /dev/sda3 /mnt/sda3 2>/dev/null || true
 fi
 
-# D. 统计图表假死修复与初始化 (MQTT 占位神操作)
+# --- D. 性能监控图表修复 ---
 if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
+    
     [ ! -f "/etc/config/luci_statistics" ] && touch /etc/config/luci_statistics
     
     uci set luci_statistics.collectd=statistics
@@ -235,6 +206,7 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     uci set luci_statistics.collectd_interface.ignoreselected='0'
     uci set luci_statistics.collectd_cpu=statistics
     uci set luci_statistics.collectd_cpu.enable='1'
+    
     uci set luci_statistics.collectd_ping=statistics
     uci set luci_statistics.collectd_ping.enable='1'
     uci delete luci_statistics.collectd_ping.Hosts 2>/dev/null
@@ -247,41 +219,43 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     /etc/init.d/luci_statistics restart
     /etc/init.d/collectd enable
     /etc/init.d/collectd restart
+    
     touch /etc/collectd_inited
 fi
 
-# E. 计划任务写入 (完美绕过文件归属权红线)
-echo "0 2 */2 * * /usr/bin/upg" >> /etc/crontabs/root
-/etc/init.d/cron restart 2>/dev/null || true
+# --- D2. Docker 自动化网络互通配置 ---
+if [ "$INCLUDE_DOCKER" = "yes" ]; then
+    [ ! -f "/etc/config/dockerd" ] && touch /etc/config/dockerd
+    uci set dockerd.globals=globals
+    uci set dockerd.globals.data_root='/mnt/sda3/docker'
+    uci commit dockerd
 
-# F. 离线环境第三方插件动态安装
-if [ -d "/etc/apk/repositories.d" ]; then
-    sed -i 's/downloads.openwrt.org/mirrors.ustc.edu.cn\/openwrt/g' /etc/apk/repositories.d/*.list
+    uci add firewall zone
+    uci set firewall.@zone[-1].name='docker'
+    uci set firewall.@zone[-1].network='docker0'
+    uci set firewall.@zone[-1].input='ACCEPT'
+    uci set firewall.@zone[-1].output='ACCEPT'
+    uci set firewall.@zone[-1].forward='ACCEPT'
+
+    uci add firewall forwarding
+    uci set firewall.@forwarding[-1].src='docker'
+    uci set firewall.@forwarding[-1].dest='lan'
+
+    uci add firewall forwarding
+    uci set firewall.@forwarding[-1].src='lan'
+    uci set firewall.@forwarding[-1].dest='docker'
+
+    uci add firewall forwarding
+    uci set firewall.@forwarding[-1].src='docker'
+    uci set firewall.@forwarding[-1].dest='wan'
+    
+    uci commit firewall
 fi
 
-# 等待网络就绪后安装依赖与插件
-(
-    WAIT_NET=0
-    while [ \$WAIT_NET -lt 30 ]; do
-        if ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1; then
-            apk update
-            # 补装 ttyd
-            apk add luci-app-ttyd luci-i18n-ttyd-zh-cn
-            # 安装开机前下载好的离线包
-            apk add -q --allow-untrusted /root/*.apk
-            rm -f /root/*.apk
-            
-            # 激活 Argon 主题
-            if uci get luci.themes.Argon >/dev/null 2>&1; then
-                uci set luci.main.mediaurlbase='/luci-static/argon'
-                uci commit luci
-            fi
-            break
-        fi
-        sleep 5
-        WAIT_NET=\$((WAIT_NET+1))
-    done
-) &
+if uci get luci.themes.Argon >/dev/null 2>&1; then
+    uci set luci.main.mediaurlbase='/luci-static/argon'
+    uci commit luci
+fi
 
 rm -f /etc/uci-defaults/99-custom-setup
 exit 0
@@ -289,103 +263,223 @@ EOF
 chmod +x files/etc/uci-defaults/99-custom-setup
 
 
-echo ">>> 6. 配置官方纯净软件列表 (视觉字典模式) <<<"
+# ==========================================
+# --- E. 终端神器 ttyd 联网自动补装 ---
+# ==========================================
+cat << 'EOF_TTYD' > files/etc/init.d/install-ttyd
+#!/bin/sh /etc/rc.common
+START=99
+start() {
+    WAIT_NET=0
+    while [ $WAIT_NET -lt 60 ]; do
+        if ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1; then
+            apk update
+            apk add luci-app-ttyd luci-i18n-ttyd-zh-cn
+            rm -f /etc/init.d/install-ttyd
+            break
+        fi
+        sleep 5
+        WAIT_NET=$((WAIT_NET+1))
+    done
+}
+EOF_TTYD
+chmod +x files/etc/init.d/install-ttyd
+mkdir -p files/etc/rc.d
+ln -s ../init.d/install-ttyd files/etc/rc.d/S99install-ttyd
 
-RAW_PACKAGES="
-    # === 【1. 核心系统与后台界面】 ===
-    -dnsmasq                                # 卸载默认的简易版 dnsmasq
-    dnsmasq-full                            # 安装完整版 dnsmasq (防污染必备)
-    luci                                    # OpenWrt 网页后台基础框架
-    luci-base                               # 网页后台核心依赖库
-    luci-compat                             # 兼容层库 (确保老版本插件正常运行)
-    luci-i18n-base-zh-cn                    # 基础界面【中文】
-    luci-i18n-firewall-zh-cn                # 防火墙设置【中文】
-    luci-i18n-package-manager-zh-cn         # 软件包管理器【中文】
 
-    # === 【2. 磁盘挂载与文件系统支持】 ===
-    block-mount                             # 开机自动挂载磁盘和 Swap 分区
-    blkid                                   # 提取磁盘 UUID
-    lsblk                                   # 树状查询磁盘结构
-    parted                                  # 现代大硬盘分区工具
-    fdisk                                   # 经典分区工具
-    e2fsprogs                               # Ext4 格式化维护工具
-    kmod-usb-storage                        # USB 存储设备基础驱动
-    kmod-usb-storage-uas                    # USB UAS 协议加速驱动 (提升硬盘速度)
-    kmod-fs-ext4                            # Ext4 挂载支持
-    kmod-fs-ntfs3                           # 新版高性能 NTFS 挂载支持
-    kmod-fs-vfat                            # FAT32 挂载支持
-    kmod-fs-exfat                           # exFAT 挂载支持
+# ==========================================
+# --- F. 优雅内置：全自动静默升级与定时任务 ---
+# ==========================================
+echo "正在生成自动升级脚本与定时任务..."
 
-    # === 【3. 科学插件底层依赖与基础工具】 ===
-    coreutils-nohup                         # 后台挂机运行工具
-    coreutils-base64                        # Base64 编解码 (订阅解析需要)
-    coreutils-sort                          # 文本排序工具
-    bash                                    # 强大的终端环境
-    jq                                      # JSON 解析工具
-    curl                                    # 网络请求工具
-    ca-bundle                               # 根证书包 (防 SSL 报错)
-    libcap                                  # Linux 进程权限控制库
-    libcap-bin                              # 权限管理命令行 (OpenClash 提权用)
-    ruby                                    # Ruby 环境
-    ruby-yaml                               # YAML 解析库
-    unzip                                   # ZIP 解压工具
+# 1. 自动生成极简命令放入系统目录 (/usr/bin/upg)
+cat << 'EOF_UPGRADE' > files/usr/bin/upg
+#!/bin/sh
+# upg - 自动静默升级软件包，安全守护
+LOGFILE="/root/upg.log"
 
-    # === 【4. 网络驱动与流量调度增强】 ===
-    ip-full                                 # 完整版 iproute2 (策略路由)
-    iptables-mod-tproxy                     # iptables 透明代理模块
-    iptables-mod-extra                      # iptables 扩展模块
-    kmod-tun                                # 虚拟隧道网卡驱动
-    kmod-inet-diag                          # 网络连接诊断模块
-    kmod-nft-tproxy                         # nftables 透明代理模块
-    kmod-igc                                # Intel 2.5G 网卡驱动 (i225/i226)
-    kmod-igb                                # Intel 千兆网卡驱动
-    kmod-r8169                              # Realtek 系列通用驱动
-    iwinfo                                  # 无线状态查询工具
+# 控制日志大小：如果日志超过 1MB，就清空重建，防止撑爆存储
+if [ -f "\$LOGFILE" ] && [ \$(wc -c < "\$LOGFILE") -gt 1048576 ]; then
+    echo "日志过大，已清空重建" > "\$LOGFILE"
+fi
 
-    # === 【5. Wi-Fi 7 与 蓝牙 硬件支持 (MT7925)】 ===
-    -wpad-basic-mbedtls                     # 卸载默认简易版无线守护进程
-    -wpad-basic-wolfssl                     # 卸载默认简易版无线守护进程
-    wpad-openssl                            # 完整版无线守护进程 (支持 WPA3)
-    kmod-mt7925e                            # MT7925 Wi-Fi 7 PCI-E 驱动
-    kmod-mt7925-firmware                    # MT7925 无线网卡闭源固件
-    kmod-btusb                              # USB 蓝牙基础驱动
-    bluez-daemon                            # 蓝牙官方协议栈
-    kmod-input-uinput                       # 用户空间输入驱动 (蓝牙键鼠支持)
+echo "===== Auto Upgrade Start: \$(date) =====" >> "\$LOGFILE"
 
-    # === 【6. 系统监控与网络排错神器】 ===
-    nano                                    # 简易文本编辑器
-    htop                                    # 彩色交互式系统监控
-    ethtool                                 # 网卡物理状态调试工具
-    tcpdump                                 # 强大的网络抓包工具
-    mtr                                     # 进阶版路由追踪工具
-    conntrack                               # 连接追踪状态查询
-    iftop                                   # 实时网络流量监控
-    screen                                  # 终端多路复用防断线保护
-    collectd-mod-thermal                    # 硬件温度采集模块
-    collectd-mod-sensors                    # 传感器采集模块
-    collectd-mod-cpu                        # CPU 采集模块
-    collectd-mod-ping                       # 延迟采集模块
-    collectd-mod-interface                  # 网卡流量采集模块
-    collectd-mod-rrdtool                    # 监控数据存储引擎
-    collectd-mod-iwinfo                     # 无线信号采集模块
+if opkg list-installed | grep -q '^openclash '; then
+    openclash_before=\$(opkg list-installed | grep '^openclash ' | awk '{print \$2}')
+else
+    openclash_before=""
+fi
 
-    # === 【7. LuCI 网页后台插件】 ===
-    luci-app-ksmbd                          # 高性能轻量网络共享 (取代 Samba)
-    luci-i18n-ksmbd-zh-cn                   # 网络共享【中文】
-    luci-app-nlbwmon                        # 局域网主机流量统计监控
-    luci-i18n-nlbwmon-zh-cn                 # 流量统计【中文】
-    luci-app-statistics                     # 状态实时监控与历史统计图表
-    luci-i18n-statistics-zh-cn              # 统计图表【中文】
-"
+opkg update >> "\$LOGFILE" 2>&1
 
-# 🎯 动态过滤引擎：
-# 用 sed 清洗掉所有 # 及后面的注释，再用 tr 把换行和多余空格压缩成单空格，最终喂给 Image Builder
-PACKAGES=$(echo "$RAW_PACKAGES" | sed 's/#.*//g' | tr -s ' \n' ' ')
+for pkg in \$(opkg list-upgradable | awk '{print \$1}'); do
+    case \$pkg in
+        base-files|busybox|dnsmasq*|dropbear|firewall*|fstools|kernel|kmod-*|libc|luci|mtd|opkg|procd|uhttpd)
+            # 核心系统组件绝对不升级，保障路由不死机
+            ;;
+        *)
+            echo "升级: \$pkg" >> "\$LOGFILE"
+            opkg upgrade \$pkg >> "\$LOGFILE" 2>&1
+            ;;
+    esac
+done
 
-echo ">>> 7. 开始 Make Image 打包 <<<"
-make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi-Deluxe" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
+if [ -n "\$openclash_before" ]; then
+    openclash_after=\$(opkg list-installed | grep '^openclash ' | awk '{print \$2}')
+    if [ "\$openclash_before" != "\$openclash_after" ]; then
+        echo "OpenClash 已升级 (\$openclash_before -> \$openclash_after)，重启服务..." >> "\$LOGFILE"
+        /etc/init.d/openclash restart >> "\$LOGFILE" 2>&1
+    fi
+fi
 
-echo ">>> 8. 提取固件 <<<"
+echo "===== Auto Upgrade End: \$(date) =====" >> "\$LOGFILE"
+EOF_UPGRADE
+
+# 2. 赋予可执行权限
+chmod +x files/usr/bin/upg
+
+# 3. 写入 Cron 定时任务 (隔天凌晨 2 点自动执行)
+echo "0 2 */2 * * /usr/bin/upg" >> files/etc/crontabs/root
+
+
+echo "=== 5. 配置 ImmortalWrt 专属软件列表 ==="
+
+PKG_CORE=(
+    "-dnsmasq"
+    "-dnsmasq-default"
+    "dnsmasq-full"
+    "luci"
+    "luci-base"
+    "luci-compat"
+    "luci-i18n-base-zh-cn"
+    "luci-i18n-firewall-zh-cn"
+    "luci-i18n-package-manager-zh-cn"
+)
+
+PKG_DISK=(
+    "block-mount"
+    "blkid"
+    "lsblk"
+    "fdisk"
+    "e2fsprogs"
+    "kmod-usb-storage"
+    "kmod-usb-storage-uas"
+    "kmod-fs-ext4"
+    "kmod-fs-ntfs3"
+    "kmod-fs-vfat"
+    "kmod-fs-exfat"
+)
+
+PKG_DEPENDS=(
+    "coreutils-nohup"
+    "bash"
+    "jq"
+    "curl"
+    "ca-bundle"
+    "libcap"
+    "libcap-bin"
+    "ruby"
+    "ruby-yaml"
+    "unzip"
+)
+
+PKG_NETWORK=(
+    "ip-full"
+    "iptables-mod-tproxy"
+    "iptables-mod-extra"
+    "kmod-tun"
+    "kmod-inet-diag"
+    "kmod-nft-tproxy"
+    "kmod-igc"
+    "kmod-igb"
+    "kmod-r8169"
+    "iwinfo"
+    "kmod-tcp-bbr"
+)
+
+PKG_WIFI_BT=(
+    "-wpad"
+    "-wpad-basic"
+    "-wpad-basic-mbedtls"
+    "-wpad-basic-wolfssl"
+    "-wpad-mbedtls"
+    "-wpad-wolfssl"
+    "wpad-openssl"
+    "kmod-mt7925e"
+    "kmod-mt7925-firmware"
+    "kmod-btusb"
+    "bluez-daemon"
+    "kmod-input-uinput"
+)
+
+PKG_MONITOR=(
+    "nano"
+    "htop"
+    "ethtool"
+    "tcpdump"
+    "mtr"
+    "conntrack"
+    "iftop"
+    "screen"
+    "collectd-mod-thermal"
+    "collectd-mod-sensors"
+    "collectd-mod-cpu"
+    "collectd-mod-ping"
+    "collectd-mod-interface"
+    "collectd-mod-rrdtool"
+    "collectd-mod-iwinfo"
+)
+
+PKG_HW_TOOLS=(
+    "pciutils"
+    "iperf3"
+    "intel-microcode"
+)
+
+PKG_LUCI_APPS=(
+    "luci-app-openclash"
+    "luci-app-homeproxy"
+    "luci-i18n-homeproxy-zh-cn"
+    "luci-theme-argon"
+    "luci-app-ksmbd"
+    "luci-i18n-ksmbd-zh-cn"
+    "luci-app-statistics"
+    "luci-i18n-statistics-zh-cn"
+    "luci-app-autoreboot"
+    "luci-i18n-autoreboot-zh-cn"
+)
+
+# 动态加载 Docker 包
+PKG_DOCKER=()
+if [ "$INCLUDE_DOCKER" = "yes" ]; then
+    PKG_DOCKER=(
+        "dockerd"
+        "docker-compose"
+        "luci-app-dockerman"
+        "luci-i18n-dockerman-zh-cn"
+    )
+fi
+
+ALL_PKGS=(
+    "${PKG_CORE[@]}"
+    "${PKG_DISK[@]}"
+    "${PKG_DEPENDS[@]}"
+    "${PKG_NETWORK[@]}"
+    "${PKG_WIFI_BT[@]}"
+    "${PKG_MONITOR[@]}"
+    "${PKG_HW_TOOLS[@]}"
+    "${PKG_LUCI_APPS[@]}"
+    "${PKG_DOCKER[@]}"
+)
+
+PACKAGES="${ALL_PKGS[*]}"
+
+echo "=== 6. 开始 Make Image 打包 ==="
+make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
+
+echo "=== 7. 提取固件 ==="
 mkdir -p output-firmware
-cp bin/targets/x86/64/*combined-efi-Deluxe.img.gz output-firmware/ 2>/dev/null || true
-echo ">>> 全部构建任务已圆满完成！ <<<"
+cp bin/targets/x86/64/*combined-efi.img.gz output-firmware/ 2>/dev/null || true
+echo "=== 全部构建任务已圆满完成！ ==="
