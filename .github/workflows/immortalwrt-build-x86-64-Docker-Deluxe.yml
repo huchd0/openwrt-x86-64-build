@@ -162,7 +162,7 @@ jobs:
         uses: softprops/action-gh-release@v2.4.1
         with:
           tag_name: Build-${{ env.DATE }}
-          name: ImmortalWrt ${{ env.FINAL_VERSION }} (${{ env.INPUT_IP }})-Deluxe
+          name: ImmortalWrt ${{ env.FINAL_VERSION }}-Deluxe (${{ env.INPUT_IP }})
           body_path: ${{ github.workspace }}/router-info.md
           files: |
             ${{ github.workspace }}/bin/targets/x86/64/*squashfs-combined-efi-Deluxe.img.gz
