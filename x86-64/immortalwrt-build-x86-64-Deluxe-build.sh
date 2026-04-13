@@ -1,173 +1,270 @@
 #!/bin/bash
 set -e
 
-# 终端输出颜色定义
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # 无颜色
+# ==========================================
+# 接收 Github Actions (Docker 容器) 传来的环境变量
+# ==========================================
+ROOTFS_SIZE=${ROOTFS_SIZE:-1024}
+INCLUDE_DOCKER=${INCLUDE_DOCKER:-"yes"}
+PPPOE_ACCOUNT=${PPPOE_ACCOUNT:-""}
+PPPOE_PASSWORD=${PPPOE_PASSWORD:-""}
 
-echo "========================================================="
-echo -e "🕒 [$(date '+%Y-%m-%d %H:%M:%S')] ${BLUE}开始构建流程...${NC}"
-echo -e "📦 目标 RootFS 分区大小: ${GREEN}${ROOTFS_SIZE:-1024} MB${NC}"
-echo "========================================================="
+# 缓存目录设定 (映射自宿主机)
+DL_CACHE=${DL_CACHE_DIR:-"/home/build/immortalwrt/dl_cache"}
+mkdir -p "$DL_CACHE"
 
-# >>> 1. 自定义固件参数 (注入 .config) <<<
-echo -e "${YELLOW}⚙️ 正在精简固件配置并设置分区大小...${NC}"
+echo ">>> 1. 自定义固件底层参数 (专属 J4125 互刷防掉盘) <<<"
+{
+    echo "CONFIG_TARGET_KERNEL_PARTSIZE=64"
+    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE"
+    # 极致优化：只生成 UEFI 的 squashfs 格式
+    echo "CONFIG_TARGET_ROOTFS_EXT4FS=n"
+    echo "CONFIG_TARGET_ROOTFS_TARGZ=n"
+    echo "CONFIG_VMDK_IMAGES=n"
+    echo "CONFIG_VDI_IMAGES=n"
+    echo "CONFIG_VHDX_IMAGES=n"
+    echo "CONFIG_QCOW2_IMAGES=n"
+    echo "CONFIG_ISO_IMAGES=n"
+    echo "CONFIG_GRUB_IMAGES=n"
+} >> .config
 
-# 使用 cat 一次性注入，避免多次调用 echo 导致 IO 碎片
-cat >> .config <<EOF
-# 设置内核分区大小
-CONFIG_TARGET_KERNEL_PARTSIZE=64
-# 禁用不需要的镜像格式 (精简输出)
-CONFIG_TARGET_ROOTFS_EXT4FS=n
-CONFIG_TARGET_ROOTFS_TARGZ=n
-CONFIG_VMDK_IMAGES=n
-CONFIG_VDI_IMAGES=n
-CONFIG_VHDX_IMAGES=n
-CONFIG_QCOW2_IMAGES=n
-CONFIG_ISO_IMAGES=n
-CONFIG_GRUB_IMAGES=n
-EOF
+echo ">>> 2. 准备初始化文件夹结构 <<<"
+mkdir -p files/root files/etc/uci-defaults files/etc/init.d files/usr/bin files/etc/openclash/core files/lib/firmware/mediatek/mt7925
 
-echo "✅ 底层配置参数写入完成。"
-
-# >>> 2. 读取外部自定义包列表 <<<
-if [ -f "shell/custom-packages.sh" ]; then
-    echo "📜 加载自定义包脚本..."
-    source shell/custom-packages.sh
-fi
-
-# >>> 3. 自动化初始化脚本 (UCI Defaults) <<<
-# 读取由 GitHub Actions 映射过来的 IP 地址文件
-if [ -f "files/etc/config/custom_router_ip.txt" ]; then
-    CUSTOM_ROUTER_IP=$(cat files/etc/config/custom_router_ip.txt)
-else
-    CUSTOM_ROUTER_IP="192.168.100.1"
-fi
-
-echo -e "${YELLOW}🔧 写入系统初始化配置 (LAN IP: $CUSTOM_ROUTER_IP)...${NC}"
-INIT_SETTING="files/etc/uci-defaults/99-init-settings"
-mkdir -p "$(dirname "$INIT_SETTING")"
-
-# 写入基础网络配置
-cat << EOF > "$INIT_SETTING"
-#!/bin/sh
-# 设置 LAN 口 IP
-uci set network.lan.ipaddr='$CUSTOM_ROUTER_IP'
-uci commit network
-EOF
-
-# 判断并写入 PPPoE 拨号配置
-if [ "$ENABLE_PPPOE" == "yes" ]; then
-    echo "📝 注入 PPPoE 宽带拨号信息..."
-    cat << EOF >> "$INIT_SETTING"
-
-# 设置 WAN 口 PPPoE 拨号
-uci set network.wan.proto='pppoe'
-uci set network.wan.username='$PPPOE_ACCOUNT'
-uci set network.wan.password='$PPPOE_PASSWORD'
-uci commit network
-EOF
-fi
-
-# 判断并写入 Docker 网络和防火墙放行规则
-if [ "$INCLUDE_DOCKER" == "yes" ]; then
-    echo "🐳 注入 Docker 专属网络与防火墙规则..."
-    cat << EOF >> "$INIT_SETTING"
-
-# 1. 注册 Docker 虚拟网卡 (方便在 LuCI 网络界面查看)
-uci set network.docker=interface
-uci set network.docker.proto='none'
-uci set network.docker.device='docker0'
-uci commit network
-
-# 2. 创建 Docker 防火墙区域
-uci set firewall.docker=zone
-uci set firewall.docker.name='docker'
-uci set firewall.docker.network='docker'
-uci set firewall.docker.input='ACCEPT'
-uci set firewall.docker.output='ACCEPT'
-uci set firewall.docker.forward='ACCEPT'
-
-# 3. 允许 Docker 容器访问外网 (Docker -> WAN)
-uci set firewall.docker_to_wan=forwarding
-uci set firewall.docker_to_wan.src='docker'
-uci set firewall.docker_to_wan.dest='wan'
-
-# 4. 允许局域网设备访问 Docker 容器 (LAN <-> Docker 双向)
-uci set firewall.docker_to_lan=forwarding
-uci set firewall.docker_to_lan.src='docker'
-uci set firewall.docker_to_lan.dest='lan'
-uci set firewall.lan_to_docker=forwarding
-uci set firewall.lan_to_docker.src='lan'
-uci set firewall.lan_to_docker.dest='docker'
-
-uci commit firewall
-EOF
-fi
-
-# 追加自删除命令
-cat << EOF >> "$INIT_SETTING"
-
-# 运行一次后自删除，保持系统干净
-rm -f /etc/uci-defaults/99-init-settings
-exit 0
-EOF
-
-# 确保初始化脚本有执行权限
-chmod +x "$INIT_SETTING"
-
-# >>> 4. 软件包组合策略 <<<
-# 基础常用工具
-BASE_PKGS="curl wget iperf3 luci-i18n-diskman-zh-cn luci-i18n-filemanager-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-ttyd-zh-cn openssh-sftp-server"
-# 主题与 UI
-THEME_PKGS="luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn"
-# 网络插件 (UPnP, 防火墙, 定时重启)
-NET_PKGS="luci-i18n-firewall-zh-cn luci-i18n-upnp-zh-cn luci-i18n-autoreboot-zh-cn"
-# 科学上网
-PROXY_PKGS="luci-app-openclash"
-
-# 处理 Docker 插件需求
-DOCKER_PKGS=""
-if [ "$INCLUDE_DOCKER" == "yes" ]; then
-    echo -e "${YELLOW}🐳 已开启 Docker 支持，正在追加相关依赖包...${NC}"
-    DOCKER_PKGS="luci-app-dockerman dockerd docker-compose"
-fi
-
-# 合并所有包
-PACKAGES="$BASE_PKGS $THEME_PKGS $NET_PKGS $PROXY_PKGS $DOCKER_PKGS $CUSTOM_PACKAGES"
-
-# >>> 5. OpenClash 核心预集成 (优化版) <<<
-if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
-    echo -e "${YELLOW}⬇️ 正在为 OpenClash 准备核心文件...${NC}"
-    CORE_PATH="files/etc/openclash/core"
-    mkdir -p "$CORE_PATH"
+echo ">>> 3. [极限并发] 缓存提取与多线程下载组件 <<<"
+# 智能下载函数：有缓存直接秒拷，无缓存才走外网，并带超时保护
+smart_dl() {
+    local URL=$1
+    local DEST=$2
+    local CACHE_FILE="$DL_CACHE/$(basename "$DEST")"
     
-    # Github Actions 在海外，不需要使用国内镜像代理，直连更稳定且速度极快
-    META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
-    
-    # 下载并解压，增加超时到30秒，重试3次
-    if wget -q --show-progress -T 30 -t 3 -O- "$META_URL" | tar xOvz > "$CORE_PATH/clash_meta"; then
-        chmod +x "$CORE_PATH/clash_meta"
-        echo -e "${GREEN}✅ Meta 核心预装成功${NC}"
+    if [ -s "$CACHE_FILE" ]; then
+        echo "⚡ [缓存命中] 极速复用: $(basename "$DEST")"
+        cp "$CACHE_FILE" "$DEST"
     else
-        echo -e "${YELLOW}⚠️ 核心下载失败或超时，编译将继续，请稍后在路由后台手动更新。${NC}"
+        echo "⬇️ [全速下载] 未命中缓存: $(basename "$DEST")"
+        wget -qO "$DEST" --timeout=15 --tries=3 "$URL" || true
+        [ -s "$DEST" ] && cp "$DEST" "$CACHE_FILE"
+    fi
+}
+
+GH_HEADER=""
+[ -n "$GITHUB_TOKEN" ] && GH_HEADER="-H \"Authorization: Bearer $GITHUB_TOKEN\""
+
+echo "正在并发获取 GitHub 最新 Releases 下载链接..."
+OPENCLASH_URL=$(eval curl -s $GH_HEADER https://api.github.com/repos/vernesong/OpenClash/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
+ARGON_URL=$(eval curl -s $GH_HEADER https://api.github.com/repos/jerrykuku/luci-theme-argon/releases | grep -m 1 "browser_download_url.*\.apk" | cut -d '"' -f 4)
+
+echo "开启并发下载池..."
+# ======= 并发下载区块开始 =======
+( [ -n "$OPENCLASH_URL" ] && smart_dl "$OPENCLASH_URL" files/root/luci-app-openclash.apk ) &
+( [ -n "$ARGON_URL" ] && smart_dl "$ARGON_URL" files/root/luci-theme-argon.apk ) &
+( smart_dl "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz" files/etc/openclash/core/meta.tar.gz ) &
+( smart_dl "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin" files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin ) &
+( smart_dl "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin" files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin ) &
+( smart_dl "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin" files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin ) &
+
+# 挂起主线程，等待所有并发任务瞬间完成！
+wait
+echo "✅ 所有组件及底层驱动准备完毕！"
+
+# 处理 Meta 压缩包
+if [ -f files/etc/openclash/core/meta.tar.gz ]; then
+    tar -zxf files/etc/openclash/core/meta.tar.gz -C files/etc/openclash/core/
+    mv files/etc/openclash/core/clash files/etc/openclash/core/clash_meta
+    chmod +x files/etc/openclash/core/clash_meta
+    rm -f files/etc/openclash/core/meta.tar.gz
+fi
+
+
+echo ">>> 4. 编写全自动静默升级脚本 <<<"
+cat << 'EOF_UPGRADE' > files/usr/bin/upg
+#!/bin/sh
+LOGFILE="/root/upg.log"
+[ -f "$LOGFILE" ] && [ $(wc -c < "$LOGFILE") -gt 1048576 ] && echo "日志过大，已清空重建" > "$LOGFILE"
+echo "===== Auto Upgrade Start: $(date) =====" >> "$LOGFILE"
+
+if command -v apk >/dev/null 2>&1; then
+    openclash_before=$(apk info -v luci-app-openclash 2>/dev/null)
+    apk update >> "$LOGFILE" 2>&1
+    apk upgrade >> "$LOGFILE" 2>&1
+    openclash_after=$(apk info -v luci-app-openclash 2>/dev/null)
+else
+    echo "仅支持 apk 包管理器。" >> "$LOGFILE"
+    exit 1
+fi
+
+if [ -n "$openclash_before" ] && [ "$openclash_before" != "$openclash_after" ]; then
+    echo "OpenClash 已升级，正在重启服务..." >> "$LOGFILE"
+    /etc/init.d/openclash restart >> "$LOGFILE" 2>&1
+fi
+echo "===== Auto Upgrade End: $(date) =====" >> "$LOGFILE"
+EOF_UPGRADE
+chmod +x files/usr/bin/upg
+
+
+echo ">>> 5. 生成开机首启初始化脚本 (含自动拨号与 Docker 网络注入) <<<"
+cat << EOF > files/etc/uci-defaults/99-custom-setup
+#!/bin/sh
+
+# A. 管理 IP 配置
+if [ -f "/etc/config/custom_router_ip.txt" ]; then
+    MY_IP=\$(cat /etc/config/custom_router_ip.txt | tr -d '\n' | tr -d '\r')
+    if [[ ! "\$MY_IP" == *"/"* ]]; then MY_IP="\${MY_IP}/24"; fi
+    uci set network.lan.ipaddr="\$MY_IP"
+    uci delete network.@device[0].ports 2>/dev/null
+    uci set network.lan.device='br-lan'
+    uci delete network.lan.type 2>/dev/null
+    rm -f /etc/config/custom_router_ip.txt
+fi
+
+uci set system.@system[0].timezone='CST-8'
+uci set system.@system[0].zonename='Asia/Shanghai'
+uci set system.@system[0].hostname='Tanxm'
+uci commit system
+
+# B. 智能网口与 WAN 口配置 (动态 PPPoE 逻辑)
+INTERFACES=\$(ls /sys/class/net | grep -E '^eth[0-9]+' | sort)
+PORT_COUNT=\$(echo "\$INTERFACES" | wc -w)
+
+if [ "\$PORT_COUNT" -eq 1 ]; then
+    uci add_list network.@device[0].ports='eth0'
+    uci delete network.wan 2>/dev/null
+    uci delete network.wan6 2>/dev/null
+else
+    for iface in \$INTERFACES; do
+        if [ "\$iface" = "eth0" ]; then
+            uci set network.wan='interface'
+            uci set network.wan.device='eth0'
+            
+            # --- 🚀 自动判定 PPPoE 还是 DHCP ---
+            if [ -n "$PPPOE_ACCOUNT" ] && [ -n "$PPPOE_PASSWORD" ]; then
+                uci set network.wan.proto='pppoe'
+                uci set network.wan.username="$PPPOE_ACCOUNT"
+                uci set network.wan.password="$PPPOE_PASSWORD"
+                uci set network.wan.ipv6='auto'
+            else
+                uci set network.wan.proto='dhcp'
+                uci set network.wan6='interface'
+                uci set network.wan6.proto='dhcpv6'
+                uci set network.wan6.device='eth0'
+            fi
+        else
+            uci add_list network.@device[0].ports="\$iface" 
+        fi
+    done
+fi
+uci commit network
+
+# C. 强制挂载大分区 (sda3)
+if ! lsblk | grep -q sda3; then
+    echo -e "w" | fdisk /dev/sda >/dev/null 2>&1
+    echo -e "n\n3\n\n\nw" | fdisk /dev/sda >/dev/null 2>&1
+    partprobe /dev/sda >/dev/null 2>&1 || true
+    sleep 3
+    if lsblk | grep -q sda3; then mkfs.ext4 -F /dev/sda3 >/dev/null 2>&1; fi
+fi
+
+TARGET_UUID=\$(blkid -s UUID -o value /dev/sda3 2>/dev/null)
+if [ -n "\$TARGET_UUID" ]; then
+    echo -e "config 'global'\n  option  anon_swap   '0'\n  option  anon_mount  '0'\n  option  auto_swap   '1'\n  option  auto_mount  '1'\n  option  delay_root  '5'\n  option  check_fs    '0'" > /etc/config/fstab
+    uci add fstab mount
+    uci set fstab.@mount[-1].uuid="\$TARGET_UUID"
+    uci set fstab.@mount[-1].target='/mnt/sda3'
+    uci set fstab.@mount[-1].enabled='1'
+    uci commit fstab
+    mkdir -p /mnt/sda3
+    mount /dev/sda3 /mnt/sda3 2>/dev/null || true
+fi
+
+# D. Docker 自动化网络与防火墙配置
+if [ "$INCLUDE_DOCKER" = "yes" ]; then
+    # 自动重定向 Docker 数据根目录到大分区
+    if [ -d "/mnt/sda3/" ]; then
+        uci set dockerd.globals.data_root='/mnt/sda3/docker'
+        uci commit dockerd
+    fi
+    
+    # 注入 Docker 防火墙放行规则 (解决容器无网问题)
+    if ! uci get firewall.docker >/dev/null 2>&1; then
+        uci add firewall zone
+        uci set firewall.@zone[-1].name='docker'
+        uci set firewall.@zone[-1].network='docker'
+        uci set firewall.@zone[-1].input='ACCEPT'
+        uci set firewall.@zone[-1].output='ACCEPT'
+        uci set firewall.@zone[-1].forward='ACCEPT'
+        
+        uci add firewall forwarding
+        uci set firewall.@forwarding[-1].src='docker'
+        uci set firewall.@forwarding[-1].dest='wan'
+        
+        uci add firewall forwarding
+        uci set firewall.@forwarding[-1].src='lan'
+        uci set firewall.@forwarding[-1].dest='docker'
+        uci commit firewall
     fi
 fi
 
-# >>> 6. 执行镜像打包 <<<
-echo -e "${BLUE}🛠️ 正在调用镜像构建器 (使用多核加速)...${NC}"
+# E. 计划任务写入
+echo "0 2 */2 * * /usr/bin/upg" >> /etc/crontabs/root
+/etc/init.d/cron restart 2>/dev/null || true
 
-# 自动获取 CPU 核心数加速打包进程
-make image PROFILE="generic" \
-           PACKAGES="$PACKAGES" \
-           FILES="files" \
-           ROOTFS_PARTSIZE=${ROOTFS_SIZE:-1024} \
-           -j$(nproc)
+# F. 离线环境第三方插件动态安装
+if [ -d "/etc/apk/repositories.d" ]; then
+    sed -i 's/downloads.openwrt.org/mirrors.ustc.edu.cn\/openwrt/g' /etc/apk/repositories.d/*.list
+fi
 
-# >>> 7. 结束提示 <<<
-echo "========================================================="
-echo -e "🎉 [$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN}固件编译成功！${NC}"
-echo -e "📂 固件存放位置: ${BLUE}bin/targets/x86/64/${NC}"
-echo "========================================================="
+(
+    WAIT_NET=0
+    while [ \$WAIT_NET -lt 30 ]; do
+        if ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1; then
+            apk update
+            apk add luci-app-ttyd luci-i18n-ttyd-zh-cn
+            apk add -q --allow-untrusted /root/*.apk
+            rm -f /root/*.apk
+            
+            if uci get luci.themes.Argon >/dev/null 2>&1; then
+                uci set luci.main.mediaurlbase='/luci-static/argon'
+                uci commit luci
+            fi
+            break
+        fi
+        sleep 5; WAIT_NET=\$((WAIT_NET+1))
+    done
+) &
+
+rm -f /etc/uci-defaults/99-custom-setup
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/99-custom-setup
+
+
+echo ">>> 6. 配置官方纯净软件列表 <<<"
+
+RAW_PACKAGES="
+    -dnsmasq dnsmasq-full luci luci-base luci-compat luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn
+    block-mount blkid lsblk parted fdisk e2fsprogs kmod-usb-storage kmod-usb-storage-uas kmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-vfat kmod-fs-exfat
+    coreutils-nohup coreutils-base64 coreutils-sort bash jq curl ca-bundle libcap libcap-bin ruby ruby-yaml unzip
+    ip-full iptables-mod-tproxy iptables-mod-extra kmod-tun kmod-inet-diag kmod-nft-tproxy kmod-igc kmod-igb kmod-r8169 iwinfo
+    -wpad-basic-mbedtls -wpad-basic-wolfssl wpad-openssl kmod-mt7925e kmod-mt7925-firmware kmod-btusb bluez-daemon kmod-input-uinput
+    nano htop ethtool tcpdump mtr conntrack iftop screen collectd-mod-thermal collectd-mod-sensors collectd-mod-cpu collectd-mod-ping collectd-mod-interface collectd-mod-rrdtool collectd-mod-iwinfo
+    luci-app-ksmbd luci-i18n-ksmbd-zh-cn luci-app-nlbwmon luci-i18n-nlbwmon-zh-cn luci-app-statistics luci-i18n-statistics-zh-cn
+"
+
+# 如果用户选择了集成 Docker，动态混入 Docker 专属包
+if [ "$INCLUDE_DOCKER" = "yes" ]; then
+    RAW_PACKAGES="$RAW_PACKAGES dockerd docker-compose dockerd-rootless kmod-veth kmod-macvlan kmod-dummy luci-app-dockerman luci-i18n-dockerman-zh-cn"
+    echo "🐳 已激活 Docker 组件及相关网络内核支持"
+fi
+
+PACKAGES=$(echo "$RAW_PACKAGES" | sed 's/#.*//g' | tr -s ' \n' ' ')
+
+echo ">>> 7. [多核极速] 开始 Make Image 打包 <<<"
+# 开启所有核心并行处理，ImageBuilder 内置机制自动生效
+make image -j$(nproc) PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi-Deluxe" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
+
+echo ">>> 8. 剔除多余格式，确保仅输出 combined-efi <<<"
+# 强制删除无用的 rootfs 等文件，只给后续上传环节留一个干净的镜像
+find bin/targets/x86/64/ -type f -not -name "*combined-efi*.img.gz" -not -name "*sha256sums" -delete
+
+echo ">>> 全部任务以极限速度构建完毕！ <<<"
