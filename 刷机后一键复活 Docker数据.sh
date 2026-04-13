@@ -41,5 +41,22 @@ echo "🟢 启动 Docker 服务..."
 /etc/init.d/dockerd enable
 /etc/init.d/dockerd start
 
+echo "🛡️ 配置防火墙规则..."
+
+# 添加一条名为 Allow-Docker-9000 的通信规则
+uci add firewall rule
+uci set firewall.@rule[-1].name='Allow-Docker-9000'
+# 允许来源：如果要限制仅内网可以写 'lan'，如果要允许外网访问可以写 '*' (代表任意)
+uci set firewall.@rule[-1].src='*'
+# 目标端口
+uci set firewall.@rule[-1].dest_port='9000'
+# 动作：接受
+uci set firewall.@rule[-1].target='ACCEPT'
+# 提交并应用防火墙配置
+uci commit firewall
+/etc/init.d/firewall restart
+
+echo "✅ 防火墙规则已添加并生效！"
+
 echo "🎉 一条龙配置全部完成！"
 echo "👉 请进入 OpenWrt 后台 -> 服务 -> Docker，检查运行状态和数据路径是否正常。"
