@@ -57,10 +57,20 @@ jobs:
 
       - name: 📋 启动纯净后台引擎
         env:
-          INPUT_ARCH: ${{ inputs.arch }}
+          RAW_INPUT_ARCH: ${{ inputs.arch }}
           INPUT_BRAND: ${{ inputs.brand }}
           INPUT_MODEL: ${{ inputs.model }}
         run: |
+          # 🛡️ 智能防撞墙逻辑：拦截不完整的镜像版本
+          # 如果是 -rc 或 SNAPSHOT 等非正式版本，强行清空架构参数，迫使底层使用网页爬虫模式
+          if [[ "$VERSION" == *"-rc"* ]] || [[ "$VERSION" == *"SNAPSHOT"* ]]; then
+            echo "⚠️ 智能拦截：检测到非正式版本 ($VERSION)。"
+            echo "⚠️ 为避免该版本的部分 Docker 架构镜像未推送而导致报错，已自动降级为【全网盲搜(网页爬虫)】模式！"
+            export INPUT_ARCH=""
+          else
+            export INPUT_ARCH="$RAW_INPUT_ARCH"
+          fi
+
           # 赋予后台脚本执行权限并启动
           chmod +x .github/scripts/OP_Arch_Profile_Radar.sh
           .github/scripts/OP_Arch_Profile_Radar.sh
