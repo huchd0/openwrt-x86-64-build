@@ -480,11 +480,25 @@ ALL_PKGS=(
 
 PACKAGES="${ALL_PKGS[*]}"
 
-echo "=== 6. 开始 Make Image 打包 ==="
-# 将 EXTRA_IMAGE_NAME 修改为 efi-Deluxe
-make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi-Deluxe" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
+echo ">>> 6. 开始 Make Image 打包 <<<"
+make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files" EXTRA_IMAGE_NAME="efi" KERNEL_PARTSIZE=64 ROOTFS_PARTSIZE="$ROOTFS_SIZE"
 
-echo "=== 7. 提取固件 ==="
-mkdir -p output-firmware
-# 匹配提取规则也需要同步加上 Deluxe
-cp bin/targets/x86/64/*efi-Deluxe*.img.gz output-firmware/ 2>/dev/null || true
+echo ">>> 7. 精准重命名与纯净提取 <<<"
+cd bin/targets/x86/64/
+
+# 1. 明确寻找那个唯一能刷机的 combined 固件
+TARGET_FILE=$(ls *squashfs-combined-efi.img.gz 2>/dev/null | head -n 1)
+
+if [ -n "$TARGET_FILE" ]; then
+    # 2. 强行给它戴上 -Deluxe 的帽子
+    NEW_NAME="${TARGET_FILE%.img.gz}-Deluxe.img.gz"
+    mv "$TARGET_FILE" "$NEW_NAME"
+    echo "✅ 成功截获并重命名核心固件: $NEW_NAME"
+fi
+
+# 3. 暴力清场：把所有没被改成 Deluxe 的垃圾镜像（比如 rootfs 或 ext4 格式）全部删掉！
+find . -type f -name "*.img.gz" ! -name "*-Deluxe.img.gz" -delete
+# 顺手清理除了 Deluxe固件 和 sha256校验文件 之外的所有杂项
+find . -type f -not -name "*-Deluxe.img.gz" -not -name "*sha256sums" -delete
+
+cd -
