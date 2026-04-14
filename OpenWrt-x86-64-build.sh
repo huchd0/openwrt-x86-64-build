@@ -147,7 +147,16 @@ libcap libcap-bin ruby ruby-yaml kmod-tun kmod-inet-diag unzip kmod-nft-tproxy k
 echo ">>> 6. 开始 Make Image 打包 <<<"
 make image PROFILE="generic" PACKAGES="$PACKAGES" FILES="files"
 
-echo ">>> 7. 提取固件 <<<"
+echo ">>> 7. 提取并重命名固件 <<<"
 mkdir -p output-firmware
-cp bin/targets/x86/64/*combined-efi.img.gz output-firmware/ 2>/dev/null || true
+
+# 寻找编译好的固件，复制并加上 Auto- 前缀
+for file in bin/targets/x86/64/*combined-efi.img.gz; do
+  if [ -f "$file" ]; then
+    filename=$(basename "$file")
+    cp "$file" "output-firmware/Auto-$filename"
+    echo "✅ 成功生成并重命名: Auto-$filename"
+  fi
+done
+
 echo ">>> 全部构建任务已圆满完成！ <<<"
