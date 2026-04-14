@@ -23,9 +23,9 @@ on:
         options:
           - 'Auto'
           - '24.10.5'
-          - '25.12.0-rc1'
+          - '25.12.0-rc2'
       custom_version:
-        description: '5. 寻找失踪机型？请手填旧版本号 (如: 23.05.4。填写即无视上方选项)'
+        description: '5. 寻找失踪机型？请手填旧版本号 (如: 23.05.4。填写无视上方)'
         required: false
         default: ''
 
@@ -33,44 +33,59 @@ jobs:
   query:
     runs-on: ubuntu-22.04
     steps:
-      - name: 📥 检出代码库 (拉取后台引擎脚本)
+      - name: 📥 检出代码库
         uses: actions/checkout@v4
 
       - name: 🔍 解析目标时空与核心版本
         id: vars
         run: |
-          # 优先级 1：如果手动输入了老版本，启动时光机强行接管！
           if [ -n "${{ inputs.custom_version }}" ]; then
-            echo ">>> 启动时光机！强行跳转至历史版本: ${{ inputs.custom_version }}"
             echo "VERSION=${{ inputs.custom_version }}" >> $GITHUB_ENV
-            
-          # 优先级 2：自动追踪 Docker Hub 最新版 (附带防风控限流降级)
           elif [ "${{ inputs.openwrt_version }}" == "Auto" ]; then
             LATEST=$(curl -sL --max-time 5 "https://hub.docker.com/v2/repositories/immortalwrt/imagebuilder/tags?page_size=100" | jq -r '.results[].name' 2>/dev/null | grep -v "SNAPSHOT" | grep -E "openwrt-[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$" | sed -E 's/.*openwrt-//' | sort -V | tail -n 1 || echo "24.10.5")
             [ -z "$LATEST" ] || [ "$LATEST" == "null" ] && LATEST="24.10.5"
             echo "VERSION=$LATEST" >> $GITHUB_ENV
-            
-          # 优先级 3：使用常规下拉菜单
           else
             echo "VERSION=${{ inputs.openwrt_version }}" >> $GITHUB_ENV
           fi
 
-      - name: 📋 启动纯净后台引擎
+      - name: 📋 启动雷达与自动降级引擎
         env:
           RAW_INPUT_ARCH: ${{ inputs.arch }}
           INPUT_BRAND: ${{ inputs.brand }}
           INPUT_MODEL: ${{ inputs.model }}
         run: |
-          # 🛡️ 智能防撞墙逻辑：拦截不完整的镜像版本
-          # 如果是 -rc 或 SNAPSHOT 等非正式版本，强行清空架构参数，迫使底层使用网页爬虫模式
+          chmod +x .github/scripts/OP_Arch_Profile_Radar.sh
+          
+          # 🛡️ 智能防撞墙：RC/Snapshot 版本强制清空架构走爬虫模式
           if [[ "$VERSION" == *"-rc"* ]] || [[ "$VERSION" == *"SNAPSHOT"* ]]; then
-            echo "⚠️ 智能拦截：检测到非正式版本 ($VERSION)。"
-            echo "⚠️ 为避免该版本的部分 Docker 架构镜像未推送而导致报错，已自动降级为【全网盲搜(网页爬虫)】模式！"
+            echo "⚠️ 检测到非正式版本 ($VERSION)，自动使用【全网网页盲搜】模式以防 Docker 镜像缺失。"
             export INPUT_ARCH=""
           else
             export INPUT_ARCH="$RAW_INPUT_ARCH"
           fi
 
-          # 赋予后台脚本执行权限并启动
-          chmod +x .github/scripts/OP_Arch_Profile_Radar.sh
-          .github/scripts/OP_Arch_Profile_Radar.sh
+          # 第一轮：执行常规扫描
+          ./.github/scripts/OP_Arch_Profile_Radar.sh
+          
+          # 🔄 自动降级逻辑 (Fallback)：如果上一轮失败，且当前不是稳定版，自动切稳定版重试！
+          STABLE_VER="24.10.5"
+          if grep -q "❌ 匹配失败" $GITHUB_STEP_SUMMARY && [ "$VERSION" != "$STABLE_VER" ]; then
+             echo -e "\n======================================================="
+             echo "🔄 触发自动降级机制！当前版本 ($VERSION) 尚未完成全平台编译。"
+             echo ">>> 正在自动切换至最稳底座: $STABLE_VER 进行重新寻址..."
+             echo -e "=======================================================\n"
+             
+             # 写入摘要提示用户发生了降级
+             {
+               echo "---"
+               echo "### 🔄 自动降级寻址"
+               echo "> ⚠️ 您选择的 \`${VERSION}\` 似乎尚未编译您所需的架构。"
+               echo "> 🤖 雷达已自动为您在稳定版 \`${STABLE_VER}\` 中执行了二次寻址："
+             } >> $GITHUB_STEP_SUMMARY
+             
+             # 重新配置环境变量并跑第二轮
+             export VERSION="$STABLE_VER"
+             export INPUT_ARCH="" # 降级必须强行清空架构走爬虫最稳
+             ./.github/scripts/OP_Arch_Profile_Radar.sh
+          fi
