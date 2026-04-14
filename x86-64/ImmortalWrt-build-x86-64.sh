@@ -153,7 +153,7 @@ PACKAGES="$PACKAGES luci-theme-argon luci-app-argon-config"
 # 核心网络插件
 PACKAGES="$PACKAGES luci-app-openclash luci-i18n-homeproxy-zh-cn luci-i18n-ddns-go-zh-cn"
 # 文件共享与传输管理
-PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn luci-i18n-samba4-zh-cn openssh-sftp-server"
+PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn luci-app-ksmbd openssh-sftp-server"
 # 硬件驱动 (MT7925)
 PACKAGES="$PACKAGES kmod-mt7925e wpad-openssl kmod-btusb bluez-daemon kmod-input-uinput kmod-mt7925-firmware"
 
