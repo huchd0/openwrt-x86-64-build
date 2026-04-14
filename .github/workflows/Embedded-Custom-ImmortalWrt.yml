@@ -1,4 +1,4 @@
-name: 🚀 ImmortalWrt-Embedded-Custom (非x86设备定制固件)
+name: 🚀 Embedded-Custom-ImmortalWrt (非x86设备定制固件)
 
 on:
   workflow_dispatch:
