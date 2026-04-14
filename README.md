@@ -68,3 +68,8 @@
 ## 🌟鸣谢
 
    https://openwrt.org/
+
+
+#  💿请我喝杯咖啡，增强更新动力! 👈🏻
+
+![image](./.github/Donate.jpg)
