@@ -139,7 +139,8 @@ fi
 # E. Wi-Fi 7 后台安全配置逻辑 (防抓空/防死配置机制)
 (
     # 轮询等待底层网卡驱动和固件加载，最多等待 60 秒 (30次 x 2秒)
-    for i in \$(seq 1 30); do
+    count=0
+    while [ \$count -lt 30 ]; do
         # 尝试生成默认无线配置
         wifi config >/dev/null 2>&1
         # 检查 UCI 中是否成功生成了包含底层硬件绑定(path/mac)的 radio0
@@ -147,6 +148,7 @@ fi
             break
         fi
         sleep 2
+        count=\$((count + 1))
     done
 
     # 只有确信 radio0 的底层配置已经成功生成后，才覆盖我们的自定义参数
