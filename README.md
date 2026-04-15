@@ -6,7 +6,7 @@
 
 在嵌入式设备环境中，通常不涉及传统 PC（x86/64）的磁盘分区机制（如 fdisk）、UEFI 启动配置或复杂的网卡驱动适配。因此，也避免了因强制分区操作导致系统无法启动的风险。这使整体流程更加简洁，开发与部署可以聚焦于核心能力，包括：跨架构内核选择、插件集成以及基础网络配置。
 
-为确保信息准确，建议通过[🔍 OP Arch & Profile Radar（嵌入式设备寻址雷达）](https://github.com/huchd0/openwrt-x86-64-build/blob/master/.github/OP-Arch-Profile-Radar-README.md)工具查询设备对应的 [【Arch 与 Profile】](https://github.com/huchd0/openwrt-x86-64-build/actions/runs/24398605469)。
+#### 为确保信息准确，建议通过[🔍 OP Arch & Profile Radar（嵌入式设备寻址雷达）](https://github.com/huchd0/openwrt-x86-64-build/blob/master/.github/OP-Arch-Profile-Radar-README.md)工具查询设备对应的 [【Arch 与 Profile】](https://github.com/huchd0/openwrt-x86-64-build/actions/runs/24398605469)。
 
 > **💡 提示**：重要提示：在编译 OpenWrt / ImmortalWrt 固件时，若架构（Arch）选择错误，可能导致固件无法刷入或设备变砖。因此，务必事先核对芯片平台对应的 Arch，以及设备专属的 Profile 名称。
 
