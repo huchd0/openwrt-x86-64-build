@@ -10,141 +10,130 @@ echo "#!/bin/sh" > $DYNAMIC_SCRIPT
 echo "uci set network.lan.ipaddr='$CUSTOM_IP'" >> $DYNAMIC_SCRIPT
 
 # =========================================================
-# 1. 隐式底层强化包 (无论如何都会安装的无感神器)
+# 1. 隐式底层强化包 (扩容魔法与性能优化必备)
 # =========================================================
 BASE_PACKAGES=""
-# 系统与中文
+# 系统核心与磁盘管理 (补全了 util-linux-lsblk 确保硬件抓取不报错)
 BASE_PACKAGES="$BASE_PACKAGES base-files block-mount default-settings-chn luci-i18n-base-zh-cn"
-# 性能与底层工具 (无界面)
+BASE_PACKAGES="$BASE_PACKAGES sgdisk parted e2fsprogs fdisk util-linux-lsblk blkid"
+# 性能优化工具
 BASE_PACKAGES="$BASE_PACKAGES irqbalance zram-swap iperf3 htop curl wget-ssl kmod-vmxnet3"
-
-# 🟢 隐式预装的小巧实用界面工具 (移出了 GitHub Action 选项卡)
-BASE_PACKAGES="$BASE_PACKAGES luci-app-ttyd luci-i18n-ttyd-zh-cn"                   # Web 终端
-BASE_PACKAGES="$BASE_PACKAGES luci-app-upnp luci-i18n-upnp-zh-cn"                   # UPnP 端口映射
-BASE_PACKAGES="$BASE_PACKAGES luci-app-wol luci-i18n-wol-zh-cn"                     # 网络唤醒
-BASE_PACKAGES="$BASE_PACKAGES luci-app-ramfree luci-i18n-ramfree-zh-cn"             # 一键释放内存
-BASE_PACKAGES="$BASE_PACKAGES luci-app-autoreboot luci-i18n-autoreboot-zh-cn"       # 定时重启
-# 隐式工具的预设配置 (定时重启默认开启：每天凌晨4点)
-echo "uci set autoreboot.@autoreboot[0].enable='1'" >> $DYNAMIC_SCRIPT
-echo "uci set autoreboot.@autoreboot[0].hour='4'" >> $DYNAMIC_SCRIPT
-echo "uci set autoreboot.@autoreboot[0].minute='0'" >> $DYNAMIC_SCRIPT
+# 隐式预装小工具 (免界面勾选)
+BASE_PACKAGES="$BASE_PACKAGES luci-app-ttyd luci-i18n-ttyd-zh-cn"
+BASE_PACKAGES="$BASE_PACKAGES luci-app-upnp luci-i18n-upnp-zh-cn"
+BASE_PACKAGES="$BASE_PACKAGES luci-app-wol luci-i18n-wol-zh-cn"
+BASE_PACKAGES="$BASE_PACKAGES luci-app-ramfree luci-i18n-ramfree-zh-cn"
+BASE_PACKAGES="$BASE_PACKAGES luci-app-autoreboot luci-i18n-autoreboot-zh-cn"
 
 # =========================================================
-# 2. 根据选项，动态追加【核心软件、中文包及专属设置】
+# 🌟 终极魔法：开机自动拉伸 RootFS，并用 UUID 挂载数据持久盘
 # =========================================================
+# 在云端提前计算好 P3 的安全起始偏移量 (+1MiB 杜绝分区重叠报错)
+START_MB=$(( ROOTFS_SIZE + 1 ))
 
-# 🎨 Argon 主题 (无控制面板)
-if [ "$THEME_ARGON" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-theme-argon"
-    echo "uci set luci.main.mediaurlbase='/luci-static/argon'" >> $DYNAMIC_SCRIPT
-fi
+# 注意：这里使用双引号 "EOF"，是为了让 $ROOTFS_SIZE 等云端变量在此刻被直接写入脚本
+cat >> $DYNAMIC_SCRIPT << EOF
+# 1. 智能抓取主硬盘
+ROOT_DISK=\$(lsblk -d -n -o NAME | grep -E 'sda|nvme[0-9]n[0-9]' | head -n 1)
 
-# 🛡️ 科学类
-if [ "$APP_HOMEPROXY" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-homeproxy luci-i18n-homeproxy-zh-cn"
-fi
-if [ "$APP_OPENCLASH" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-openclash" # OpenClash 自带多语言
-fi
-if [ "$APP_PASSWALL" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-passwall luci-i18n-passwall-zh-cn"
-fi
+if [ -n "\$ROOT_DISK" ]; then
+    DISK_DEV="/dev/\$ROOT_DISK"
+    
+    # 适配 SATA 与 NVMe 的分区命名后缀
+    if echo "\$ROOT_DISK" | grep -q "nvme"; then
+        P2="\${DISK_DEV}p2"
+        P3="\${DISK_DEV}p3"
+    else
+        P2="\${DISK_DEV}2"
+        P3="\${DISK_DEV}3"
+    fi
 
-# 📁 存储与下载类
-if [ "$APP_KSMBD" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-ksmbd luci-i18n-ksmbd-zh-cn"
-    echo "uci set ksmbd.globals.workgroup='WORKGROUP'" >> $DYNAMIC_SCRIPT
-    echo "uci set ksmbd.globals.description='ImmortalWrt NAS'" >> $DYNAMIC_SCRIPT
-fi
-if [ "$APP_ALIST" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-alist"
-fi
-if [ "$APP_QBITTORRENT" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-qbittorrent luci-i18n-qbittorrent-zh-cn"
-fi
+    # 2. 修复 GPT 备份表，释放硬盘末尾空间
+    sgdisk -e \$DISK_DEV
+    sync && sleep 1
 
-# 🛑 广告拦截
-if [ "$APP_ADGUARDHOME" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-adguardhome"
-fi
+    # 3. 强行拉伸系统盘 (P2) 至用户目标容量
+    parted -s \$DISK_DEV resizepart 2 ${ROOTFS_SIZE}MiB
+    sync && sleep 1
+    resize2fs \$P2
 
-# ⚖️ MWAN3 负载均衡/多拨
-if [ "$APP_MWAN3" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-mwan3 luci-i18n-mwan3-zh-cn"
-fi
+    # 4. 判断数据盘 (P3) 是否存在 (实现跨版本刷机保留数据)
+    if ! lsblk \$P3 >/dev/null 2>&1; then
+        # 仅在第一次刷机时，创建第三分区并格式化
+        parted -s \$DISK_DEV mkpart primary ext4 ${START_MB}MiB 100%
+        sync && sleep 2
+        mkfs.ext4 -F \$P3
+        sync && sleep 1
+    fi
 
-# 🔑 KMS 激活
-if [ "$APP_VLMCSD" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-vlmcsd luci-i18n-vlmcsd-zh-cn"
-    echo "uci set vlmcsd.config.enabled='1'" >> $DYNAMIC_SCRIPT
-    echo "uci set vlmcsd.config.autoactivate='1'" >> $DYNAMIC_SCRIPT
-fi
+    # 5. 最稳健的 UUID 挂载逻辑 (防止硬盘插拔乱序)
+    P3_UUID=\$(blkid -s UUID -o value \$P3)
+    if [ -n "\$P3_UUID" ]; then
+        # 删除旧的 opt_mount 防止重复，强制更新
+        uci -q delete fstab.opt_mount || true
+        uci set fstab.opt_mount='mount'
+        uci set fstab.opt_mount.uuid="\$P3_UUID"
+        uci set fstab.opt_mount.target='/opt'
+        uci set fstab.opt_mount.fstype='ext4'
+        uci set fstab.opt_mount.enabled='1'
+        uci commit fstab
+    fi
 
-# 📊 状态监控与 QoS
-if [ "$APP_STATISTICS" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-statistics luci-i18n-statistics-zh-cn"
-    BASE_PACKAGES="$BASE_PACKAGES collectd collectd-mod-cpu collectd-mod-interface collectd-mod-memory collectd-mod-network"
-    echo "uci set luciplugins.statistics.enable='1'" >> $DYNAMIC_SCRIPT
+    # 6. 提前建好储物间，并尝试在开机第一秒立即挂载
+    mkdir -p /opt/docker /opt/alist /opt/downloads /opt/smb
+    mount \$P3 /opt 2>/dev/null || true
 fi
-if [ "$APP_SQM" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-sqm luci-i18n-sqm-zh-cn"
-fi
-
-# 🕸️ VPN 与穿透组网
-if [ "$APP_WIREGUARD" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-proto-wireguard"
-fi
-# 🕸️ Tailscale 异地组网
-if [ "$APP_TAILSCALE" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES tailscale"
-fi
-if [ "$APP_ZEROTIER" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-zerotier luci-i18n-zerotier-zh-cn"
-fi
-if [ "$APP_FRPC" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-frpc luci-i18n-frpc-zh-cn"
-fi
+EOF
 
 # =========================================================
-# 3. 实体网卡驱动 (严格按需加载)
+# 2. 根据界面勾选，动态追加功能
 # =========================================================
+[ "$THEME_ARGON" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-theme-argon" && echo "uci set luci.main.mediaurlbase='/luci-static/argon'" >> $DYNAMIC_SCRIPT
+[ "$APP_HOMEPROXY" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-homeproxy luci-i18n-homeproxy-zh-cn"
+[ "$APP_OPENCLASH" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-openclash"
+[ "$APP_PASSWALL" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-passwall luci-i18n-passwall-zh-cn"
+[ "$APP_KSMBD" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-ksmbd luci-i18n-ksmbd-zh-cn" && echo "uci set ksmbd.globals.workgroup='WORKGROUP'" >> $DYNAMIC_SCRIPT
+[ "$APP_ALIST" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-alist"
+[ "$APP_QBITTORRENT" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-qbittorrent luci-i18n-qbittorrent-zh-cn"
+[ "$APP_ADGUARDHOME" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-adguardhome"
+[ "$APP_MWAN3" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-mwan3 luci-i18n-mwan3-zh-cn"
+[ "$APP_VLMCSD" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-vlmcsd luci-i18n-vlmcsd-zh-cn" && echo "uci set vlmcsd.config.enabled='1'" >> $DYNAMIC_SCRIPT
+[ "$APP_STATISTICS" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-statistics luci-i18n-statistics-zh-cn collectd collectd-mod-cpu collectd-mod-interface collectd-mod-memory collectd-mod-network"
+[ "$APP_SQM" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-sqm luci-i18n-sqm-zh-cn"
+[ "$APP_WIREGUARD" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-proto-wireguard"
+[ "$APP_TAILSCALE" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES tailscale"
+[ "$APP_ZEROTIER" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-zerotier luci-i18n-zerotier-zh-cn"
+[ "$APP_FRPC" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-frpc luci-i18n-frpc-zh-cn"
 
-if [ "$KMOD_IGC" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES kmod-igc"                         # Intel i225/i226
-fi
-if [ "$KMOD_IXGBE" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES kmod-ixgbe"                       # Intel 10G
-fi
-if [ "$KMOD_E1000E" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES kmod-e1000e"                      # Intel 千兆
-fi
-if [ "$KMOD_R8169" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES kmod-r8169"                       # Realtek 瑞昱千兆
-fi
-if [ "$KMOD_R8125" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES kmod-r8125"                       # Realtek 瑞昱 2.5G
-fi
+[ "$KMOD_IGC" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES kmod-igc"
+[ "$KMOD_IXGBE" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES kmod-ixgbe"
+[ "$KMOD_E1000E" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES kmod-e1000e"
+[ "$KMOD_R8169" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES kmod-r8169"
+[ "$KMOD_R8125" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES kmod-r8125"
 
-# 🐳 Docker 组件
-if [ "$INCLUDE_DOCKER" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-dockerman luci-i18n-dockerman-zh-cn docker-compose"
-fi
+[ "$INCLUDE_DOCKER" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-dockerman luci-i18n-dockerman-zh-cn docker-compose"
 
 # =========================================================
-# 4. 封装配置、应用分区大小并执行编译
+# 4. 封装配置、锁死底层体积并执行编译
 # =========================================================
 echo "uci commit" >> $DYNAMIC_SCRIPT
 echo "exit 0" >> $DYNAMIC_SCRIPT
 chmod +x $DYNAMIC_SCRIPT
 
-# 强行修改底层 .config 文件，将 RootFS 分区大小设定为我们面板上输入的值 (默认 1024MB)
+# 🎯 强行锁死云端出包为 512MB，实现极速编译
 if grep -q "CONFIG_TARGET_ROOTFS_PARTSIZE" .config; then
-    sed -i "s/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE/g" .config
+    sed -i "s/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=512/g" .config
 else
-    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE" >> .config
+    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=512" >> .config
+fi
+
+# 🛡️ 强行锁死内核分区为 64MB，确保未来重刷固件时数据盘起点的物理扇区绝对不偏移
+if grep -q "CONFIG_TARGET_KERNEL_PARTSIZE" .config; then
+    sed -i "s/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=64/g" .config
+else
+    echo "CONFIG_TARGET_KERNEL_PARTSIZE=64" >> .config
 fi
 
 echo ">>> 最终打包的软件列表: $BASE_PACKAGES"
-echo ">>> 💾 固件 RootFS 分区大小已设定为: ${ROOTFS_SIZE} MB"
 
 make image PROFILE="generic" PACKAGES="$BASE_PACKAGES" FILES="files"
