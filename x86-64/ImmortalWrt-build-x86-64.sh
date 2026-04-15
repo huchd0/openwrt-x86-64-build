@@ -40,8 +40,11 @@ echo ">>> 3. [极限并发] 核心组件多线程秒下 <<<"
 ( wget -qO files/etc/openclash/GeoIP.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" ) &
 ( wget -qO files/etc/openclash/GeoSite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" ) &
 
+# MT7925 Wi-Fi 底层核心固件
 FW_URL="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/mediatek/mt7925"
 ( wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin "$FW_URL/BT_RAM_CODE_MT7925_1_1_hdr.bin" ) &
+( wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin "$FW_URL/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin" ) &
+( wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin "$FW_URL/WIFI_RAM_CODE_MT7925_1_1.bin" ) &
 
 # 挂起主线程，等待所有文件瞬间就绪
 wait
@@ -136,14 +139,11 @@ if uci get luci.themes.Argon >/dev/null 2>&1; then
     uci commit luci
 fi
 
-# E. Wi-Fi 7 后台安全配置逻辑 (防抓空/防死配置机制)
+# E. Wi-Fi 7 后台安全配置逻辑 (多频自适应防冲突版)
 (
-    # 轮询等待底层网卡驱动和固件加载，最多等待 60 秒 (30次 x 2秒)
     count=0
     while [ \$count -lt 30 ]; do
-        # 尝试生成默认无线配置
         wifi config >/dev/null 2>&1
-        # 检查 UCI 中是否成功生成了包含底层硬件绑定(path/mac)的 radio0
         if uci get wireless.radio0 >/dev/null 2>&1; then
             break
         fi
@@ -151,27 +151,37 @@ fi
         count=\$((count + 1))
     done
 
-    # 只有确信 radio0 的底层配置已经成功生成后，才覆盖我们的自定义参数
     if uci get wireless.radio0 >/dev/null 2>&1; then
+        # 遍历所有被识别出来的射频模块 (radio0, radio1...)
+        for radio in \$(uci show wireless | grep -E '^wireless.radio[0-9]+=' | cut -d'.' -f2 | cut -d'=' -f1); do
+            uci set wireless.\${radio}.country='CN'
+            uci set wireless.\${radio}.cell_density='0'
+            uci set wireless.\${radio}.disabled='0'  # 0代表开启
+
+            iface="default_\${radio}"
+            if ! uci get wireless.\${iface} >/dev/null 2>&1; then
+                uci set wireless.\${iface}=wifi-iface
+                uci set wireless.\${iface}.device="\${radio}"
+                uci set wireless.\${iface}.network='lan'
+                uci set wireless.\${iface}.mode='ap'
+            fi
+
+            uci set wireless.\${iface}.encryption='sae-mixed'
+            uci set wireless.\${iface}.ssid='mywifi7'
+            uci set wireless.\${iface}.key='Aa666666'
+            uci set wireless.\${iface}.ocv='0'
+            uci set wireless.\${iface}.disabled='0'
+        done
+        
+        # 强制指定核心 5G 频段参数
         uci set wireless.radio0.band='5g'
         uci set wireless.radio0.channel='149'
-        uci set wireless.radio0.country='CN'
-        uci set wireless.radio0.cell_density='0'
-        uci set wireless.radio0.disabled='0'  # 0代表开启
-
-        # 如果接口尚未生成，补齐接口配置
-        if ! uci get wireless.default_radio0 >/dev/null 2>&1; then
-            uci set wireless.default_radio0=wifi-iface
-            uci set wireless.default_radio0.device='radio0'
-            uci set wireless.default_radio0.network='lan'
-            uci set wireless.default_radio0.mode='ap'
+        
+        # 如果硬件同时映射了 2.4G 频段到 radio1，设置兼容信道防系统崩溃
+        if uci get wireless.radio1 >/dev/null 2>&1; then
+            uci set wireless.radio1.band='2g'
+            uci set wireless.radio1.channel='1'
         fi
-
-        uci set wireless.default_radio0.encryption='sae-mixed'
-        uci set wireless.default_radio0.ssid='mywifi7'
-        uci set wireless.default_radio0.key='Aa666666'
-        uci set wireless.default_radio0.ocv='0'
-        uci set wireless.default_radio0.disabled='0'  # 0代表开启
 
         uci commit wireless
         # 配置完后，无缝重启无线服务使配置立即生效
