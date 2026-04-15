@@ -63,7 +63,7 @@ uci set network.lan.netmask='255.255.255.0'
 uci set network.lan.device='br-lan'
 uci delete network.lan.type 2>/dev/null
 
-清除官方默认生成的物理网口绑定(防止系统默认把 eth0 绑在 LAN 导致冲突)
+# 清除官方默认生成的物理网口绑定(防止系统默认把 eth0 绑在 LAN 导致冲突)
 while uci -q delete network.@device[0]; do :; done
 
 # 安全地创建属于我们的 br-lan 桥接设备
@@ -268,23 +268,62 @@ echo "" >> files/etc/crontabs/root
 chmod 0600 files/etc/crontabs/root
 
 echo ">>> 5. 组装极简与指定软件包列表 <<<"
-PACKAGES=""
-# 系统基础与语言包
-PACKAGES="$PACKAGES luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn luci-i18n-ttyd-zh-cn"
-# 文件系统、挂载与磁盘管理
-PACKAGES="$PACKAGES luci-i18n-diskman-zh-cn block-mount fdisk parted lsblk e2fsprogs kmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-exfat kmod-usb-storage-uas"
-# 命令行工具 (含指定的 script-utils)
-PACKAGES="$PACKAGES bash curl jq unzip nano htop tcpdump mtr iwinfo script-utils"
-# 主题外观
-PACKAGES="$PACKAGES luci-theme-argon"
-# 核心网络插件
-PACKAGES="$PACKAGES luci-app-openclash luci-i18n-homeproxy-zh-cn luci-i18n-ddns-go-zh-cn"
-# 文件共享与传输管理
-PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn luci-app-ksmbd luci-i18n-ksmbd-zh-cn openssh-sftp-server"
-# 硬件驱动 (MT7925)
-PACKAGES="$PACKAGES kmod-mt7925e wpad-openssl kmod-btusb bluez-daemon kmod-input-uinput kmod-mt7925-firmware"
+declare -a PKG_LIST=(
+    # --- 系统基础与界面 ---
+    "luci-i18n-base-zh-cn"            # 基础中文包
+    "luci-i18n-firewall-zh-cn"        # 防火墙中文
+    "luci-i18n-package-manager-zh-cn" # 软件包管理器中文
+    "luci-i18n-ttyd-zh-cn"            # 网页终端中文
+    "luci-theme-argon"                # Argon 极简主题
+    
+    # --- 磁盘与文件系统 ---
+    "luci-i18n-diskman-zh-cn"         # 磁盘管理中文
+    "block-mount"                     # 挂载基础组件
+    "fdisk"                           # 分区工具
+    "parted"                          # 高级分区工具
+    "lsblk"                           # 块设备查看
+    "e2fsprogs"                       # ext4文件系统工具
+    "kmod-fs-ext4"                    # ext4内核模块
+    "kmod-fs-ntfs3"                   # ntfs3内核模块
+    "kmod-fs-exfat"                   # exfat内核模块
+    "kmod-usb-storage-uas"            # USB存储加速驱动
+    
+    # --- 命令行与网络工具 ---
+    "bash"                            # 增强型命令行
+    "curl"                            # 网络请求工具
+    "jq"                              # JSON处理工具
+    "unzip"                           # 解压工具
+    "nano"                            # 文本编辑器
+    "htop"                            # 性能监控工具
+    "tcpdump"                         # 抓包工具
+    "mtr"                             # 路由追踪工具
+    "iwinfo"                          # 无线信息工具
+    "script-utils"                    # 脚本辅助工具
+    
+    # --- 核心网络插件 ---
+    "luci-app-openclash"              # 科学网络 OpenClash
+    "luci-i18n-homeproxy-zh-cn"       # 科学网络 HomeProxy 中文
+    "luci-i18n-ddns-go-zh-cn"         # 动态域名 DDNS-GO 中文
+    
+    # --- 文件共享与传输 ---
+    "luci-i18n-filemanager-zh-cn"     # 文件管理中文
+    "luci-app-ksmbd"                  # 高速 SMB 共享
+    "luci-i18n-ksmbd-zh-cn"           # 高速 SMB 共享中文
+    "openssh-sftp-server"             # SFTP 文件传输
+    
+    # --- MT7925 硬件驱动 ---
+    "kmod-mt7925e"                    # MT7925 PCIe 驱动
+    "wpad-openssl"                    # WPA 认证组件
+    "kmod-btusb"                      # 蓝牙 USB 驱动
+    "bluez-daemon"                    # 蓝牙守护进程
+    "kmod-input-uinput"               # 用户输入模块
+    "kmod-mt7925-firmware"            # MT7925 核心固件
+)
 
-# 强制 IPv4 优先防卡死，其余全交由官方环境直连
+# 转换数组为字符串传递给打包引擎
+PACKAGES="${PKG_LIST[*]}"
+
+# 强制 IPv4 优先防卡死
 echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf 2>/dev/null || true
 
 echo ">>> 6. [CPU多核镇压] 开始 Make Image 打包 <<<"
