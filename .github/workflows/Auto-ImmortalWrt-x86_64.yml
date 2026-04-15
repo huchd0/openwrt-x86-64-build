@@ -15,9 +15,9 @@ on:
         required: true
         default: "192.168.100.1"
       rootfs_size:
-        description: 'RootFS 分区大小 (MB)'
+        description: '核心系统最终容量 (MB) - 云端将极速打包512MB，开机自动拉伸至此值'
         required: true
-        default: '1024'
+        default: '10240'
         
       # ====== 核心网络与存储 (5个) ======
       include_docker:
@@ -122,7 +122,6 @@ jobs:
       INPUT_IP: ${{ github.event.inputs.custom_router_ip }}
       INPUT_ROOTFS: ${{ github.event.inputs.rootfs_size }}
       
-      # 映射所有选项
       INPUT_DOCKER: ${{ github.event.inputs.include_docker }}
       INPUT_APP_HOMEPROXY: ${{ github.event.inputs.app_homeproxy }}
       INPUT_APP_OPENCLASH: ${{ github.event.inputs.app_openclash }}
@@ -206,22 +205,25 @@ jobs:
       - name: Generate Smart Release Notes
         run: |
           cat > ${{ github.workspace }}/router-info.md <<EOF
-          ## 🚀 ImmortalWrt ${{ env.FINAL_VERSION }} 究极定制满配版
+          ## 🚀 ImmortalWrt ${{ env.FINAL_VERSION }} 终极动态架构版
           
           ## 📡 网络后台
           - 🏠 **管理地址**: \`$INPUT_IP\`
           - 👤 **默认账户**: \`root\`
           - 🔑 **默认密码**: *(无，请在初始设置时修改)*
           
-          > 💡 **小巧巨能：底层已预置增强工具 (无需勾选即刻生效)**: 
-          > \`TTYD\`(终端)、\`UPnP\`(端口映射)、\`WOL\`(网络唤醒)、\`AutoReboot\`(定时重启)、\`RamFree\`(一键释放内存)、\`FileTransfer\`(网页传文件)。
+          > 💡 **架构黑科技 (云端极速打包 + 本地智能分离扩容)**: 
+          > 本次编译强制云端极速打包为 \`512MB\`，下载与刷写速度极快。刷入物理机**首次开机时**，底层脚本将自动执行以下操作：
+          > 1. 将内核定死为 \`64MB\` (保障日后刷机界限不偏移)。
+          > 2. 将主系统盘 (sda2) 无损拉伸扩容至您指定的 \`${INPUT_ROOTFS}MB\`。
+          > 3. 将剩余的所有硬盘空间划分为数据盘 (sda3) 并利用 UUID 强绑定挂载至 \`/opt\`。**后续无论怎么重刷系统，/opt 中的 Docker 与缓存数据都不会丢失！**
           EOF
 
       - name: Upload ImmortWrt as release assets
         uses: softprops/action-gh-release@v2.4.1
         with:
           tag_name: Build-${{ env.DATE }}
-          name: ImmortalWrt ${{ env.FINAL_VERSION }} 究极版 (${{ github.event.inputs.custom_router_ip }})
+          name: ImmortalWrt ${{ env.FINAL_VERSION }} 终极架构 (${{ github.event.inputs.custom_router_ip }})
           body_path: ${{ github.workspace }}/router-info.md
           files: |
             ${{ github.workspace }}/bin/targets/x86/64/*-ext4-combined-efi.img.gz
