@@ -94,12 +94,9 @@ fi
 if [ "$APP_WIREGUARD" = "true" ]; then
     BASE_PACKAGES="$BASE_PACKAGES luci-proto-wireguard"
 fi
-if [ "$APP_TAILSCALE" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES tailscale"
-fi
 # 🕸️ Tailscale 异地组网
 if [ "$APP_TAILSCALE" = "true" ]; then
-    BASE_PACKAGES="$BASE_PACKAGES luci-app-tailscale"
+    BASE_PACKAGES="$BASE_PACKAGES tailscale"
 fi
 if [ "$APP_ZEROTIER" = "true" ]; then
     BASE_PACKAGES="$BASE_PACKAGES luci-app-zerotier luci-i18n-zerotier-zh-cn"
