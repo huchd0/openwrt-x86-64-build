@@ -131,12 +131,20 @@ if [ "$INCLUDE_DOCKER" = "true" ]; then
 fi
 
 # =========================================================
-# 4. 封装并执行配置保存，最后清理自毁
+# 4. 封装配置、应用分区大小并执行编译
 # =========================================================
 echo "uci commit" >> $DYNAMIC_SCRIPT
 echo "exit 0" >> $DYNAMIC_SCRIPT
 chmod +x $DYNAMIC_SCRIPT
 
+# 强行修改底层 .config 文件，将 RootFS 分区大小设定为我们面板上输入的值 (默认 1024MB)
+if grep -q "CONFIG_TARGET_ROOTFS_PARTSIZE" .config; then
+    sed -i "s/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE/g" .config
+else
+    echo "CONFIG_TARGET_ROOTFS_PARTSIZE=$ROOTFS_SIZE" >> .config
+fi
+
 echo ">>> 最终打包的软件列表: $BASE_PACKAGES"
+echo ">>> 💾 固件 RootFS 分区大小已设定为: ${ROOTFS_SIZE} MB"
 
 make image PROFILE="generic" PACKAGES="$BASE_PACKAGES" FILES="files"
