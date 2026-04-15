@@ -137,6 +137,10 @@ jobs:
           # 追加编译成功信息到摘要面板
           echo "### 🎉 编译成功" >> $GITHUB_STEP_SUMMARY
           echo "- **固件体积:** \`${FIRMWARE_SIZE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **下载地址:** [👉 点击此处前往 Releases 页面下载固件](https://github.com/${{ github.repository }}/releases/tag/OpenWrt-Latest)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+
 
       - name: 🗑️ 清理旧的同名 Release
         if: steps.check_version.outputs.SHOULD_BUILD == 'true'
