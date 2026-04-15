@@ -20,48 +20,48 @@ on:
         description: '编译固件 RootFS 分区大小 (单位: MB，建议 1024 以上)'
         required: true
         default: '1024'
-
-      # ==========================================
-      # ⬇️ 模块化功能开关 (复选框区域，支持默认打勾) ⬇️
-      # ==========================================
-      include_docker:
-        description: "🐳 Docker"
-        type: boolean
-        default: true
-      app_openclash:
-        description: "🔌 集成 OpenClash (科学上网)"
-        type: boolean
-        default: true
-      app_passwall:
-        description: "🚀 集成 PassWall (备用科学插件)"
-        type: boolean
-        default: false
-      app_upnp:
-        description: "🎮 集成 UPnP (自动端口映射)"
-        type: boolean
-        default: true
-      app_ddns:
-        description: "🌐 集成 DDNS (动态域名解析)"
-        type: boolean
-        default: false
-      app_wol:
-        description: "💻 集成 WOL (网络唤醒)"
-        type: boolean
-        default: false
-      app_alist:
-        description: "🗂️ 集成 AList (多存储网盘挂载)"
-        type: boolean
-        default: false
-        
-
-      # ==========================================
-
       pppoe_account:
         description: "PPPOE 宽带账号 (可选)"
         required: false
       pppoe_password:
         description: "宽带密码 (留空则默认为 DHCP 上网)"
         required: false
+        
+      # ==========================================
+      # ⬇️ 模块化功能开关 (按需加载，按需配置) ⬇️
+      # ==========================================
+      include_docker:
+        description: "🐳 集成 Docker 引擎及网络互通"
+        type: boolean
+        default: true
+      app_homeproxy:
+        description: "🛡️ 集成 HomeProxy (全能科学代理)"
+        type: boolean
+        default: true
+      app_openclash:
+        description: "🔌 集成 OpenClash (备用科学插件)"
+        type: boolean
+        default: false
+      theme_argon:
+        description: "🎨 集成 Argon 主题及控制面板"
+        type: boolean
+        default: true
+      app_ksmbd:
+        description: "📁 集成 KSMBD (局域网极速共享)"
+        type: boolean
+        default: true
+      app_statistics:
+        description: "📊 集成 Statistics (图形化状态监控)"
+        type: boolean
+        default: true
+      app_autoreboot:
+        description: "⏱️ 集成 AutoReboot (定时重启)"
+        type: boolean
+        default: true
+      kmod_nics:
+        description: "🔌 集成全套网卡驱动 (igc/ixgbe/r8169等)"
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -74,14 +74,15 @@ jobs:
       INPUT_PPPOE_ACC: ${{ github.event.inputs.pppoe_account }}
       INPUT_PPPOE_PWD: ${{ github.event.inputs.pppoe_password }}
       
-      # 映射布尔值到环境变量 (选中为 'true', 未选为 'false')
+      # 映射布尔值到环境变量
       INPUT_DOCKER: ${{ github.event.inputs.include_docker }}
+      INPUT_APP_HOMEPROXY: ${{ github.event.inputs.app_homeproxy }}
       INPUT_APP_OPENCLASH: ${{ github.event.inputs.app_openclash }}
-      INPUT_APP_PASSWALL: ${{ github.event.inputs.app_passwall }}
-      INPUT_APP_UPNP: ${{ github.event.inputs.app_upnp }}
-      INPUT_APP_DDNS: ${{ github.event.inputs.app_ddns }}
-      INPUT_APP_WOL: ${{ github.event.inputs.app_wol }}
-      INPUT_APP_ALIST: ${{ github.event.inputs.app_alist }}
+      INPUT_THEME_ARGON: ${{ github.event.inputs.theme_argon }}
+      INPUT_APP_KSMBD: ${{ github.event.inputs.app_ksmbd }}
+      INPUT_APP_STATISTICS: ${{ github.event.inputs.app_statistics }}
+      INPUT_APP_AUTOREBOOT: ${{ github.event.inputs.app_autoreboot }}
+      INPUT_KMOD_NICS: ${{ github.event.inputs.kmod_nics }}
       
     steps:
       - name: Checkout code
@@ -115,22 +116,6 @@ jobs:
             echo "FINAL_VERSION=$INPUT_VERSION" >> $GITHUB_ENV
           fi
 
-      - name: Save Custom Router IP into OpenWrt files
-        run: |
-          mkdir -p "${{ github.workspace }}/files/etc/config"
-          echo "$INPUT_IP" > "${{ github.workspace }}/files/etc/config/custom_router_ip.txt"
-          echo "✅ 管理地址文件已生成: $INPUT_IP"
-      
-      - name: Check PPPoE Inputs (Graceful Fallback)
-        run: |
-          if [[ -n "$INPUT_PPPOE_ACC" && -n "$INPUT_PPPOE_PWD" ]]; then
-            echo "✅ 检测到完整的宽带账号和密码，将启用 PPPoE 自动拨号。"
-          elif [[ -n "$INPUT_PPPOE_ACC" || -n "$INPUT_PPPOE_PWD" ]]; then
-            echo "⚠️ 提示: 宽带账号或密码未填全。系统将安全回退至 DHCP 模式。"
-          else
-            echo "✅ 未检测到宽带配置，将默认使用 DHCP。"
-          fi
-
       - name: Build ImmortalWrt-x86-64-efi
         run: |
           echo "🚀 开始基于 ${{ env.FINAL_VERSION }} 构建，RootFS 大小: ${INPUT_ROOTFS}MB"
@@ -141,70 +126,44 @@ jobs:
             -v "${{ github.workspace }}/files:/home/build/immortalwrt/files" \
             -v "${{ github.workspace }}/shell:/home/build/immortalwrt/shell" \
             -v "${{ github.workspace }}/x86-64/auto-build-script.sh:/home/build/immortalwrt/build.sh" \
+            -e CUSTOM_IP="$INPUT_IP" \
             -e ROOTFS_SIZE="$INPUT_ROOTFS" \
             -e INCLUDE_DOCKER="$INPUT_DOCKER" \
             -e PPPOE_ACCOUNT="$INPUT_PPPOE_ACC" \
             -e PPPOE_PASSWORD="$INPUT_PPPOE_PWD" \
+            -e APP_HOMEPROXY="$INPUT_APP_HOMEPROXY" \
             -e APP_OPENCLASH="$INPUT_APP_OPENCLASH" \
-            -e APP_PASSWALL="$INPUT_APP_PASSWALL" \
-            -e APP_UPNP="$INPUT_APP_UPNP" \
-            -e APP_DDNS="$INPUT_APP_DDNS" \
-            -e APP_WOL="$INPUT_APP_WOL" \
-            -e APP_ALIST="$INPUT_APP_ALIST" \
+            -e THEME_ARGON="$INPUT_THEME_ARGON" \
+            -e APP_KSMBD="$INPUT_APP_KSMBD" \
+            -e APP_STATISTICS="$INPUT_APP_STATISTICS" \
+            -e APP_AUTOREBOOT="$INPUT_APP_AUTOREBOOT" \
+            -e KMOD_NICS="$INPUT_KMOD_NICS" \
             immortalwrt/imagebuilder:x86-64-openwrt-${{ env.FINAL_VERSION }} /bin/bash /home/build/immortalwrt/build.sh
           
       - name: Generate Smart Release Notes
         run: |
-          DOCKER_STATUS="❎ 未集成"
-          DOCKER_NOTE="*(未启用 Docker 自动化配置)*"
-          if [ "$INPUT_DOCKER" == "true" ]; then
-            DOCKER_STATUS="✅ 已集成 (**包含全自动网络互通与防火墙转发规则**)"
-            DOCKER_NOTE="自动注册 Docker 虚拟网卡，并在防火墙中打通 LAN与Docker 的双向访问、允许 Docker 容器直连外网拉取镜像。"
-          fi
-
-          WAN_STATUS="🔌 DHCP / 静态 IP"
-          PPPOE_NOTE="*(未启用自动拨号功能)*"
-          if [[ -n "$INPUT_PPPOE_ACC" && -n "$INPUT_PPPOE_PWD" ]]; then
-            WAN_STATUS="📝 PPPoE (**开机全自动注入账号密码并拨号**)"
-            PPPOE_NOTE="自动将你填写的宽带账号密码写入 WAN 口并拨号。"
-          elif [[ -n "$INPUT_PPPOE_ACC" || -n "$INPUT_PPPOE_PWD" ]]; then
-            WAN_STATUS="🔌 DHCP / 静态 IP (**⚠️ 宽带配置不全，已放弃 PPPoE**)"
-            PPPOE_NOTE="*(检测到不完整的宽带信息，防呆机制触发，已安全回退至 DHCP 模式)*"
-          fi
-
-          # 动态拼接已安装插件的 Markdown 列表
+          # 动态拼接已安装组件列表
           PLUGINS_INSTALLED=""
-          [ "$INPUT_APP_OPENCLASH" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-openclash\`\n"
-          [ "$INPUT_APP_PASSWALL" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-passwall\`\n"
-          [ "$INPUT_APP_UPNP" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-upnp\`\n"
-          [ "$INPUT_APP_DDNS" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-ddns\`\n"
-          [ "$INPUT_APP_WOL" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-wol\`\n"
-          [ "$INPUT_APP_ALIST" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-alist\`\n"
-          [ -z "$PLUGINS_INSTALLED" ] && PLUGINS_INSTALLED="- *(未选择任何额外插件)*"
+          [ "$INPUT_APP_HOMEPROXY" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-homeproxy\` (全能代理)\n"
+          [ "$INPUT_APP_OPENCLASH" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-openclash\` (科学内核)\n"
+          [ "$INPUT_THEME_ARGON" == "true" ] && PLUGINS_INSTALLED+="- \`luci-theme-argon\` (专属美化主题)\n"
+          [ "$INPUT_APP_KSMBD" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-ksmbd\` (极速内网共享)\n"
+          [ "$INPUT_APP_STATISTICS" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-statistics\` (图表状态监控)\n"
+          [ "$INPUT_APP_AUTOREBOOT" == "true" ] && PLUGINS_INSTALLED+="- \`luci-app-autoreboot\` (定时重启防护)\n"
+          [ "$INPUT_KMOD_NICS" == "true" ] && PLUGINS_INSTALLED+="- \`kmod-*虚拟与实体网卡驱动集\` (igc/ixgbe/e1000e等)\n"
 
           cat > ${{ github.workspace }}/router-info.md <<EOF
           ## 🚀 ImmortalWrt ${{ env.FINAL_VERSION }} 智能定制固件
           
-          > 本固件由 GitHub Actions 驱动 \`ImageBuilder\` 全自动智能构建。
-          
-          ## 📡 路由器后台与网络
+          ## 📡 网络后台
           - 🏠 **管理地址**: \`$INPUT_IP\`
           - 👤 **默认账户**: \`root\`
           - 🔑 **默认密码**: *(无，请在初始设置时修改)*
-          - 🌐 **上网方式**: $WAN_STATUS
           
-          ## ⚙️ 核心固件特性
-          - 🔒 **内核分区**: \`64 MB\`
-          - 💾 **RootFS 分区**: \`${INPUT_ROOTFS} MB\`
-          - 🐳 **Docker 环境**: $DOCKER_STATUS
-          
-          ## 🧩 已集成的自选插件
+          ## 🧩 已集成的自选组件与预设
           $PLUGINS_INSTALLED
           
-          ## 💡 开机自动化说明 (无痕部署)
-          1. 自动绑定指定的 LAN 口 IP。
-          2. $PPPOE_NOTE
-          3. $DOCKER_NOTE
+          > 💡 **智能无痕部署**: 本固件内置了自动初始化脚本，上述选中的插件已在开机时自动注入了对应的设置（如语言包、默认配置等），首次开机生效后部署脚本会自我销毁，保障系统纯净。
           EOF
 
       - name: Upload ImmortWrt as release assets
