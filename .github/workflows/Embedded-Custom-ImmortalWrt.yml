@@ -176,10 +176,11 @@ jobs:
         if: success()
         run: |
           {
-            echo "---"
             echo "### 📥 固件已发布至下载页！"
             echo "您的专属固件已成功打包，并永久存放在了本项目的 Releases 页面中。"
             echo "👉 **[点击这里直达下载页面](https://github.com/${{ github.repository }}/releases/tag/${{ env.CLEAN_PROFILE }}-${{ env.VERSION }}-${{ env.CLEAN_ARCH }}-${{ inputs.build_mode }})**"
+            echo ""
+            echo "---"
           } >> $GITHUB_STEP_SUMMARY
           
         env:
