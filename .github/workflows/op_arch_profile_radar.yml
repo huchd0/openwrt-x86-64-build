@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       arch:
-        description: '1. 设备架构 (非必填。留空则全网盲搜)'
+        description: '1. 设备架构或芯片 (如 mt7981, rockchip-armv8。留空走盲搜)'
         required: false
         default: ''
       brand:
@@ -51,42 +51,38 @@ jobs:
 
       - name: 📋 启动雷达与自动降级引擎
         env:
-          INPUT_CHIP: ${{ inputs.chip }}
-          RAW_INPUT_ARCH: ${{ inputs.arch }}
+          INPUT_ARCH: ${{ inputs.arch }}
           INPUT_BRAND: ${{ inputs.brand }}
           INPUT_MODEL: ${{ inputs.model }}
         run: |
           chmod +x .github/scripts/OP_Arch_Profile_Radar.sh
           
-          # 🛡️ 智能防撞墙：RC/Snapshot 版本强制清空架构走爬虫模式
-          if [[ "$VERSION" == *"-rc"* ]] || [[ "$VERSION" == *"SNAPSHOT"* ]]; then
-            echo "⚠️ 检测到非正式版本 ($VERSION)，自动使用【全网网页盲搜】模式以防 Docker 镜像缺失。"
-            export INPUT_ARCH=""
-          else
-            export INPUT_ARCH="$RAW_INPUT_ARCH"
-          fi
-
-          # 第一轮：执行常规扫描
+          # 第一轮：执行常规扫描 (底层脚本会自动处理芯片到架构的智能推导)
           ./.github/scripts/OP_Arch_Profile_Radar.sh
           
-          # 🔄 自动降级逻辑 (Fallback)：如果上一轮失败，且当前不是稳定版，自动切稳定版重试！
+          # 🔄 自动降级逻辑 (Fallback)：
+          # 如果第一轮匹配失败 (例如 RC 版尚未编译该架构)，且当前寻找的不是稳定版(24.10.5)
+          # 则自动回退到稳定版重新寻址
           STABLE_VER="24.10.5"
           if grep -q "❌ 匹配失败" $GITHUB_STEP_SUMMARY && [ "$VERSION" != "$STABLE_VER" ]; then
-             echo -e "\n======================================================="
-             echo "🔄 触发自动降级机制！当前版本 ($VERSION) 尚未完成全平台编译。"
-             echo ">>> 正在自动切换至最稳底座: $STABLE_VER 进行重新寻址..."
-             echo -e "=======================================================\n"
-             
-             # 写入摘要提示用户发生了降级
-             {
-               echo "---"
-               echo "### 🔄 自动降级寻址"
-               echo "> ⚠️ 您选择的 \`${VERSION}\` 似乎尚未编译您所需的架构。"
-               echo "> 🤖 雷达已自动为您在稳定版 \`${STABLE_VER}\` 中执行了二次寻址："
-             } >> $GITHUB_STEP_SUMMARY
-             
-             # 重新配置环境变量并跑第二轮
-             export VERSION="$STABLE_VER"
-             export INPUT_ARCH="" # 降级必须强行清空架构走爬虫最稳
-             ./.github/scripts/OP_Arch_Profile_Radar.sh
+              echo -e "\n======================================================="
+              echo "🔄 触发自动降级机制！当前版本 ($VERSION) 尚未完成全平台编译或镜像缺失。"
+              echo ">>> 正在自动切换至最稳底座: $STABLE_VER 进行重新寻址..."
+              echo -e "=======================================================\n"
+              
+              # 写入摘要提示用户发生了降级
+              {
+                echo "---"
+                echo "### 🔄 自动降级寻址"
+                echo "> ⚠️ 您选择的 \`${VERSION}\` 似乎尚未编译或缺失您所需的架构/机型。"
+                echo "> 🤖 雷达已自动为您在稳定版 \`${STABLE_VER}\` 中执行了二次寻址："
+              } >> $GITHUB_STEP_SUMMARY
+              
+              # 重新配置环境变量并跑第二轮
+              export VERSION="$STABLE_VER"
+              
+              # 为了保证降级后寻址成功率最高，强行清空架构，触发底层脚本的“全网多线程爬虫盲搜”
+              export INPUT_ARCH="" 
+              
+              ./.github/scripts/OP_Arch_Profile_Radar.sh
           fi
