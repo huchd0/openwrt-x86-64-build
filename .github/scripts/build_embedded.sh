@@ -177,66 +177,60 @@ ALL_PROFS=$(make info | grep "^[a-zA-Z0-9_-]*:" | cut -d ':' -f 1)
 FINAL_PROF=$(echo "$ALL_PROFS" | grep -ix "$EXACT_PROFILE" | head -n 1 || echo "$EXACT_PROFILE")
 
 # ==========================================
-# 🚀 7. 终极打包与强力抢救
+# 🚀 7. 终极打包与日志监听
 # ==========================================
 echo ">>> 🚀 正在打包固件 (模式: $BUILD_MODE)..."
 
-# 开启后台“小偷”程序，防止 ImageBuilder 报错后删除 bin 文件
-mkdir -p /tmp/salvage
-( while true; do find bin/targets -name "*.bin" -exec cp {} /tmp/salvage/ \; 2>/dev/null; sleep 0.5; done ) &
-SALVAGE_PID=$!
-
-# 执行编译，忽略报错
-make image PROFILE="$FINAL_PROF" PACKAGES="$PKGS" FILES="files" || echo "⚠️ 引擎报告体积警告，尝试从缓存抢救..."
-
-kill $SALVAGE_PID || true
-mkdir -p bin/targets/salvaged
-cp /tmp/salvage/*.bin bin/targets/salvaged/ 2>/dev/null || true
+# 执行编译，同时将终端日志克隆一份保存到 build.log 中，方便我们抓包
+make image PROFILE="$FINAL_PROF" PACKAGES="$PKGS" FILES="files" 2>&1 | tee build.log
 
 # ==========================================
-# 🛡️ 8. 物理体积二次核验与智能排错建议
+# 🛡️ 8. 智能排错与状态输出
 # ==========================================
-FIRMWARE_FILE=$(find bin/targets -name "*.bin" | head -n 1)
 SUMMARY_FILE="bin/step_summary.md"
+
+# 🔍 抓包判定 1：直接从日志里捕捉“体积超标”的死亡宣告
+if grep -q "is too big" build.log; then
+    echo "❌ 致命拦截：系统日志显示固件体积严重超标，ImageBuilder 拒绝打包！"
+    
+    {
+        echo "### ❌ 编译终止：固件体积严重超标！"
+        echo "> **系统拦截**: 您强行塞入了过多的插件，总容量已突破该路由器物理闪存的极限，引擎已拒绝打包。"
+        echo ""
+        echo "#### 💡 诊断与排错建议："
+        echo "因为您选择了 \`${BUILD_MODE}\` 模式，巨大的 OpenClash 内核导致空间溢出。"
+        echo "请返回重新点击 **Run workflow**，并在弹出的菜单中修改配置："
+        echo ""
+        echo "1. 💽 **切换为 Extroot (智能U盘扩容) 模式** 👉 **【墙裂推荐】**"
+        echo "   *此模式生成的固件极小，包过！刷入后在路由器上插个闲置 U 盘，系统会自动把它变成你的无底洞内置空间，并自动联网装好全套豪华插件！*"
+        echo "2. 🗑️ **切换为 Lite (丐版) 模式**"
+        echo "   *不插 U 盘的妥协方案，直接剔除所有大型占用的科学插件，当普通路由器用。*"
+    } >> "$SUMMARY_FILE"
+    
+    exit 1
+fi
+
+# 🔍 抓包判定 2：如果没有超标，正常去寻找固件并测算大小
+FIRMWARE_FILE=$(find bin/targets -name "*.bin" | head -n 1)
 
 if [ -f "$FIRMWARE_FILE" ]; then
     FILE_SIZE=$(du -k "$FIRMWARE_FILE" | cut -f1)
     echo ">>> 📊 固件检测成功！当前体积: ${FILE_SIZE}KB"
     
-    if [ "$FILE_SIZE" -gt 16128 ]; then # 15.75MB 安全线
-        echo "❌ 致命错误：固件体积 (${FILE_SIZE}KB) 超过了 16MB 物理闪存上限！"
-        
-        # 将报告写入挂载到外部的 bin 目录中
-        {
-            echo "### ❌ 编译终止：固件体积严重超标！"
-            echo "当前生成的固件体积为 **${FILE_SIZE} KB**，远远超过了该设备物理闪存的安全上限 (约 15.7 MB)。"
-            echo ""
-            echo "#### 💡 诊断与修复建议："
-            echo "由于您当前选择了 \`${BUILD_MODE}\` 模式，系统试图将 OpenClash 及其庞大的 Meta 内核强行塞入路由器，导致空间溢出。"
-            echo "请**重新点击 Run workflow**，并在弹出的选项菜单中进行以下调整："
-            echo ""
-            echo "1. 💽 **切换为 Extroot (智能U盘扩容) 模式** 👉 **【强烈推荐】**"
-            echo "   *此模式下，生成的固件极小，绝对能顺利刷入。刷入后只需在路由器上插个 U 盘，系统会自动把 U 盘变成内置空间，并自动联网下载安装全套豪华插件！*"
-            echo "2. 🗑️ **切换为 Lite (丐版) 模式**"
-            echo "   *如果您没有多余的 U 盘，只想把路由器当普通千兆路由用，选此模式可剔除所有大型插件。*"
-        } >> "$SUMMARY_FILE"
-        
-        exit 1
-    else
-        echo "✅ 校验通过：体积符合 16MB 物理规格，可安全刷入。"
-        
-        {
-            echo "### ✅ 编译打包成功！"
-            echo "固件体积：**${FILE_SIZE} KB** (状态：健康)"
-            echo "您可以直接在下方 Artifacts 下载刷机包。"
-        } >> "$SUMMARY_FILE"
-    fi
+    {
+        echo "### ✅ 编译打包成功！"
+        echo "- 固件体积：**${FILE_SIZE} KB** (健康)"
+        echo "- 请在页面底部的 Artifacts 中下载您的专属固件。"
+    } >> "$SUMMARY_FILE"
+    
 else
+    # 🔍 抓包判定 3：既不是太大，也没找到文件，说明是奇葩依赖冲突报错
     echo "❌ 错误：未能在 bin 目录找到生成的固件。"
     
     {
-        echo "### ❌ 编译失败：未生成固件"
-        echo "ImageBuilder 引擎可能因为插件冲突或依赖缺失未能生成 bin 文件。请点开上方的 \`🏗️ 执行 Docker 构建引擎\` 步骤查看详细报错日志。"
+        echo "### ❌ 编译失败：未知核心报错"
+        echo "ImageBuilder 引擎未能生成 bin 文件，且排除了体积超标原因。可能存在插件冲突或底层依赖缺失。"
+        echo "请点开上方的 \`🏗️ 执行 Docker 构建引擎\` 步骤查看详细的红色报错日志。"
     } >> "$SUMMARY_FILE"
     
     exit 1
@@ -245,17 +239,7 @@ fi
 # ==========================================
 # 🏷️ 9. 重命名与清理
 # ==========================================
-[ -d "bin/targets/salvaged" ] && cd bin/targets/salvaged || cd bin/targets/*/*
-for img in *.bin; do
-    if [ -f "$img" ]; then
-        mv "$img" "${img%.*}-${TARGET_ARCH}.bin"
-    fi
-done
-
-# ==========================================
-# 🏷️ 9. 重命名与清理
-# ==========================================
-[ -d "bin/targets/salvaged" ] && cd bin/targets/salvaged || cd bin/targets/*/*
+[ -d "bin/targets/salvaged" ] && cd bin/targets/salvaged || cd bin/targets/*/* 2>/dev/null || true
 for img in *.bin; do
     if [ -f "$img" ]; then
         mv "$img" "${img%.*}-${TARGET_ARCH}.bin"
