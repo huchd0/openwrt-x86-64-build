@@ -15,7 +15,7 @@ echo "uci set network.lan.ipaddr='$CUSTOM_IP'" >> $DYNAMIC_SCRIPT
 BASE_PACKAGES=""
 # 系统核心与磁盘管理 (补全了 util-linux-lsblk 确保硬件抓取不报错)
 BASE_PACKAGES="$BASE_PACKAGES base-files block-mount default-settings-chn luci-i18n-base-zh-cn"
-BASE_PACKAGES="$BASE_PACKAGES sgdisk parted e2fsprogs fdisk util-linux-lsblk blkid"
+BASE_PACKAGES="$BASE_PACKAGES sgdisk parted e2fsprogs fdisk lsblk blkid"
 # 性能优化工具
 BASE_PACKAGES="$BASE_PACKAGES irqbalance zram-swap iperf3 htop curl wget-ssl kmod-vmxnet3"
 # 隐式预装小工具 (免界面勾选)
