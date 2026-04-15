@@ -51,6 +51,7 @@ jobs:
 
       - name: 📋 启动雷达与自动降级引擎
         env:
+          INPUT_CHIP: ${{ inputs.chip }}
           RAW_INPUT_ARCH: ${{ inputs.arch }}
           INPUT_BRAND: ${{ inputs.brand }}
           INPUT_MODEL: ${{ inputs.model }}
