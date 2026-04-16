@@ -25,11 +25,11 @@ on:
         type: boolean
         default: true
       app_homeproxy:
-        description: "🛡️ 集成 HomeProxy (全能代理)"
+        description: "🛡️ 集成 HomeProxy (轻量代理)"
         type: boolean
         default: false
       app_openclash:
-        description: "🔌 集成 OpenClash"
+        description: "🔌 集成 OpenClash (全能代理)"
         type: boolean
         default: true
       app_passwall:
