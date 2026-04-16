@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-# 0. 云端预处理：预下载 OpenClash 兼容版核心
+# 0. 云端预处理：OpenClash 核心预备
 # =========================================================
 mkdir -p files/etc/openclash/core
 if [ "$APP_OPENCLASH" = "true" ]; then
-    echo ">>> 正在下载 OpenClash Meta 兼容版内核..."
+    echo ">>> 正在下载 OpenClash 兼容版核心..."
     CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz"
     curl -sL --retry 3 "$CORE_URL" -o meta.tar.gz
     if tar -tzf meta.tar.gz >/dev/null 2>&1; then
@@ -16,29 +16,26 @@ if [ "$APP_OPENCLASH" = "true" ]; then
 fi
 
 # =========================================================
-# 1. 基础包与初始化脚本
+# 1. 初始化脚本 (网络与存储重定向)
 # =========================================================
 mkdir -p files/etc/uci-defaults
 DYNAMIC_SCRIPT="files/etc/uci-defaults/99-dynamic-settings"
 echo "#!/bin/sh" > $DYNAMIC_SCRIPT
 
-BASE_PACKAGES="base-files block-mount default-settings-chn luci-i18n-base-zh-cn"
-BASE_PACKAGES="$BASE_PACKAGES luci-i18n-package-manager-zh-cn irqbalance htop curl wget-ssl kmod-vmxnet3"
-
-# =========================================================
-# 🌟 核心魔法：暴力重建网络
-# =========================================================
 cat >> $DYNAMIC_SCRIPT << EOF
-exec >/var/log/first_boot.log 2>&1
+# --- A. 官方软件源自动修正 ---
+sed -i 's/downloads.immortalwrt.org/mirror.sjtu.edu.cn\/immortalwrt/g' /etc/opkg/distfeeds.conf
 
-# --- 彻底推倒重建网络配置，杜绝幽灵 eth0 ---
+# --- B. 数据存储重定向 (Collectd) ---
+mkdir -p /opt/collectd_rrd
+uci set statistics.collectd.Datadir='/opt/collectd_rrd'
+uci commit statistics
+
+# --- C. 智能网络分配逻辑 ---
 INTERFACES=\$(ls /sys/class/net 2>/dev/null | grep -E '^eth|^enp|^eno' | sort)
 ETH_COUNT=\$(echo "\$INTERFACES" | grep -c '^')
-
 if [ "\$ETH_COUNT" -gt 0 ]; then
     FIRST_ETH=\$(echo "\$INTERFACES" | head -n 1)
-    
-    # 物理抹除旧配置
     rm -f /etc/config/network
     touch /etc/config/network
     
@@ -57,12 +54,10 @@ if [ "\$ETH_COUNT" -gt 0 ]; then
     uci set network.lan.proto='static'
     uci set network.lan.ipaddr='$CUSTOM_IP'
     uci set network.lan.netmask='255.255.255.0'
-
+    
     if [ "\$ETH_COUNT" -eq 1 ]; then
-        # 单网口：只有 LAN
         uci add_list network.br_lan.ports="\$FIRST_ETH"
     else
-        # 多网口：首口 WAN/WAN6，其余桥接 LAN
         uci set network.wan=interface
         uci set network.wan.device="\$FIRST_ETH"
         uci set network.wan.proto='dhcp'
@@ -70,7 +65,7 @@ if [ "\$ETH_COUNT" -gt 0 ]; then
         uci set network.wan6=interface
         uci set network.wan6.device="\$FIRST_ETH"
         uci set network.wan6.proto='dhcpv6'
-
+        
         for eth in \$(echo "\$INTERFACES" | grep -v "^\$FIRST_ETH\$"); do
             uci add_list network.br_lan.ports="\$eth"
         done
@@ -80,7 +75,19 @@ fi
 EOF
 
 # =========================================================
-# 2. 插件包全量组装逻辑
+# 2. 静默预装软件包 (精准剔除冗余，仅保留增量包)
+# =========================================================
+BASE_PACKAGES=""
+
+# 核心底层增强工具 (修正官方底包缺失)
+BASE_PACKAGES="$BASE_PACKAGES sgdisk nano wget-ssl"
+BASE_PACKAGES="$BASE_PACKAGES pciutils usbutils ethtool iperf3 irqbalance kmod-vmxnet3"
+
+# 状态监控包 (配合 /opt 数据重定向使用)
+BASE_PACKAGES="$BASE_PACKAGES luci-app-statistics luci-i18n-statistics-zh-cn collectd collectd-mod-cpu collectd-mod-interface collectd-mod-memory"
+
+# =========================================================
+# 3. 动态加载 UI 勾选的大插件
 # =========================================================
 [ "$THEME_ARGON" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-theme-argon"
 [ "$APP_HOMEPROXY" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-homeproxy luci-i18n-homeproxy-zh-cn"
@@ -92,7 +99,6 @@ EOF
 [ "$APP_QBITTORRENT" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-qbittorrent luci-i18n-qbittorrent-zh-cn"
 [ "$APP_MWAN3" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-mwan3 luci-i18n-mwan3-zh-cn"
 [ "$APP_VLMCSD" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-vlmcsd luci-i18n-vlmcsd-zh-cn"
-[ "$APP_STATISTICS" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-statistics luci-i18n-statistics-zh-cn collectd collectd-mod-cpu collectd-mod-interface collectd-mod-memory"
 [ "$APP_SQM" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-sqm luci-i18n-sqm-zh-cn"
 [ "$APP_WIREGUARD" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-proto-wireguard"
 [ "$APP_TAILSCALE" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES tailscale"
@@ -107,17 +113,15 @@ EOF
 [ "$INCLUDE_DOCKER" = "true" ] && BASE_PACKAGES="$BASE_PACKAGES luci-app-dockerman luci-i18n-dockerman-zh-cn docker-compose"
 
 # =========================================================
-# 4. 极限打包：SquashFS 原生直出大容量
+# 4. 极限打包：SquashFS 原生直出大容量，彻底封杀冗余格式
 # =========================================================
 echo "uci commit" >> $DYNAMIC_SCRIPT
 echo "exit 0" >> $DYNAMIC_SCRIPT
 chmod +x $DYNAMIC_SCRIPT
 
-# 重点 1：将镜像分区在云端直接撑满至填写的容量 (默认 10GB)
 sed -i "s/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=${ROOTFS_SIZE}/g" .config || echo "CONFIG_TARGET_ROOTFS_PARTSIZE=${ROOTFS_SIZE}" >> .config
 sed -i "s/CONFIG_TARGET_KERNEL_PARTSIZE=.*/CONFIG_TARGET_KERNEL_PARTSIZE=64/g" .config || echo "CONFIG_TARGET_KERNEL_PARTSIZE=64" >> .config
 
-# 重点 2：回归官方正统架构，开启 squashfs，关闭 ext4
 echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
 echo "CONFIG_TARGET_ROOTFS_EXT4FS=n" >> .config   
 echo "CONFIG_TARGET_ROOTFS_TARGZ=n" >> .config
