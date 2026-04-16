@@ -17,99 +17,79 @@ on:
       rootfs_size:
         description: '核心系统最终容量 (MB) [SquashFS原生直出]'
         required: true
-        default: '1024'
+        default: '10240'
         
       # ====== 核心网络与存储 ======
       include_docker:
-        description: "🐳 集成 Docker 引擎"
+        description: "🐳 集成 Docker 引擎 (虚拟化容器)"
         type: boolean
         default: true
       app_homeproxy:
-        description: "🛡️ 集成 HomeProxy (轻量代理)"
-        type: boolean
-        default: false
-      app_openclash:
-        description: "🔌 集成 OpenClash (全能代理)"
+        description: "🛡️ 集成 HomeProxy (轻量代理工具)"
         type: boolean
         default: true
+      app_openclash:
+        description: "🔌 集成 OpenClash (全能代理工具)"
+        type: boolean
+        default: false
       app_passwall:
-        description: "🚀 集成 PassWall"
+        description: "🚀 集成 PassWall (经典的代理工具)"
         type: boolean
         default: false
       app_ksmbd:
-        description: "📁 集成 KSMBD (局域网共享)"
+        description: "📁 集成 KSMBD (内网共享文件)"
         type: boolean
         default: true
 
       # ====== 常用扩展工具 ======
+      app_wechatpush:
+        description: "🔔 集成 WeChatPush (微信通知发送)"
+        type: boolean
+        default: true
+      app_diskman:
+        description: "💽 集成 Diskman (分区和格式化硬盘)"
+        type: boolean
+        default: true
       theme_argon:
-        description: "🎨 集成 Argon 主题"
+        description: "🎨 集成 Argon 主题 (高颜值的后台界面)"
         type: boolean
         default: true
       app_adguardhome:
-        description: "🛑 集成 AdGuardHome"
+        description: "🛑 集成 AdGuardHome (全局广告拦截与DNS隐私保护)"
         type: boolean
         default: false
       app_alist:
-        description: "🗂️ 集成 AList"
+        description: "🗂️ 集成 AList (网盘挂载成本地硬盘)"
         type: boolean
         default: false
       app_qbittorrent:
-        description: "🧲 集成 qBittorrent"
-        type: boolean
-        default: false
-      app_mwan3:
-        description: "⚖️ 集成 MWAN3 (多线多拨)"
-        type: boolean
-        default: false
-      app_vlmcsd:
-        description: "🔑 集成 KMS 激活服务"
+        description: "🧲 集成 qBittorrent (PT/BT 离线下载神器)"
         type: boolean
         default: false
       app_statistics:
-        description: "📊 集成 Statistics (状态监控)"
+        description: "📊 集成 Statistics (CPU/内存/网络的走势图)"
         type: boolean
-        default: false
-      app_sqm:
-        description: "🚦 集成 SQM QoS"
-        type: boolean
-        default: false
+        default: true
       app_wireguard:
-        description: "🛡️ 集成 WireGuard"
+        description: "🛡️ 集成 WireGuard (内核级虚拟局域网)"
         type: boolean
         default: false
       app_tailscale:
-        description: "🕸️ 集成 Tailscale"
+        description: "🕸️ 集成 Tailscale (内网穿透)"
         type: boolean
         default: false
       app_zerotier:
-        description: "🌍 集成 ZeroTier"
-        type: boolean
-        default: false
-      app_frpc:
-        description: "🚇 集成 FRPC (内网穿透)"
+        description: "🌍 集成 ZeroTier (老牌虚拟穿透工具)"
         type: boolean
         default: false
 
       # ====== 实体网卡驱动 ======
       kmod_igc:
-        description: "🔌 驱动: Intel i225/i226 (2.5G)"
+        description: "🔌 驱动: Intel i225/i226 (Intel 2.5G 网卡驱动)"
         type: boolean
         default: true
-      kmod_ixgbe:
-        description: "🔌 驱动: Intel 10G (万兆)"
-        type: boolean
-        default: false
-      kmod_e1000e:
-        description: "🔌 驱动: Intel 千兆"
-        type: boolean
-        default: false
-      kmod_r8169:
-        description: "🔌 驱动: Realtek 瑞昱千兆"
-        type: boolean
-        default: false
       kmod_r8125:
-        description: "🔌 驱动: Realtek 瑞昱 2.5G"
+        description: "🔌 驱动: Realtek 瑞昱 2.5G (螃蟹 2.5G 网卡驱动)"
         type: boolean
         default: false
 
@@ -126,22 +106,17 @@ jobs:
       APP_OPENCLASH: ${{ github.event.inputs.app_openclash }}
       APP_PASSWALL: ${{ github.event.inputs.app_passwall }}
       APP_KSMBD: ${{ github.event.inputs.app_ksmbd }}
+      APP_WECHATPUSH: ${{ github.event.inputs.app_wechatpush }}
+      APP_DISKMAN: ${{ github.event.inputs.app_diskman }}
       THEME_ARGON: ${{ github.event.inputs.theme_argon }}
       APP_ADGUARDHOME: ${{ github.event.inputs.app_adguardhome }}
       APP_ALIST: ${{ github.event.inputs.app_alist }}
       APP_QBITTORRENT: ${{ github.event.inputs.app_qbittorrent }}
-      APP_MWAN3: ${{ github.event.inputs.app_mwan3 }}
-      APP_VLMCSD: ${{ github.event.inputs.app_vlmcsd }}
       APP_STATISTICS: ${{ github.event.inputs.app_statistics }}
-      APP_SQM: ${{ github.event.inputs.app_sqm }}
       APP_WIREGUARD: ${{ github.event.inputs.app_wireguard }}
       APP_TAILSCALE: ${{ github.event.inputs.app_tailscale }}
       APP_ZEROTIER: ${{ github.event.inputs.app_zerotier }}
-      APP_FRPC: ${{ github.event.inputs.app_frpc }}
       KMOD_IGC: ${{ github.event.inputs.kmod_igc }}
-      KMOD_IXGBE: ${{ github.event.inputs.kmod_ixgbe }}
-      KMOD_E1000E: ${{ github.event.inputs.kmod_e1000e }}
-      KMOD_R8169: ${{ github.event.inputs.kmod_r8169 }}
       KMOD_R8125: ${{ github.event.inputs.kmod_r8125 }}
 
     steps:
@@ -150,8 +125,8 @@ jobs:
 
       - name: 设置脚本权限
         run: |
-          sed -i 's/\r$//' ${{ github.workspace }}/x86-64/Flex-ImmortalWrt-x86_64-build.sh
-          chmod +x ${{ github.workspace }}/x86-64/Flex-ImmortalWrt-x86_64-build.sh
+          sed -i 's/\r$//' ${{ github.workspace }}/x86-64/auto-build-script.sh
+          chmod +x ${{ github.workspace }}/x86-64/auto-build-script.sh
 
       - name: 解析智能版本号
         id: resolve_version
@@ -168,7 +143,7 @@ jobs:
           docker run --rm -i \
             --user root \
             -v "${{ github.workspace }}/bin:/home/build/immortalwrt/bin" \
-            -v "${{ github.workspace }}/x86-64/Flex-ImmortalWrt-x86_64-build.sh:/home/build/immortalwrt/build.sh" \
+            -v "${{ github.workspace }}/x86-64/auto-build-script.sh:/home/build/immortalwrt/build.sh" \
             -e CUSTOM_IP="$INPUT_IP" \
             -e ROOTFS_SIZE="$INPUT_ROOTFS" \
             -e INCLUDE_DOCKER="$INCLUDE_DOCKER" \
@@ -176,22 +151,17 @@ jobs:
             -e APP_OPENCLASH="$APP_OPENCLASH" \
             -e APP_PASSWALL="$APP_PASSWALL" \
             -e APP_KSMBD="$APP_KSMBD" \
+            -e APP_WECHATPUSH="$APP_WECHATPUSH" \
+            -e APP_DISKMAN="$APP_DISKMAN" \
             -e THEME_ARGON="$THEME_ARGON" \
             -e APP_ADGUARDHOME="$APP_ADGUARDHOME" \
             -e APP_ALIST="$APP_ALIST" \
             -e APP_QBITTORRENT="$APP_QBITTORRENT" \
-            -e APP_MWAN3="$APP_MWAN3" \
-            -e APP_VLMCSD="$APP_VLMCSD" \
             -e APP_STATISTICS="$APP_STATISTICS" \
-            -e APP_SQM="$APP_SQM" \
             -e APP_WIREGUARD="$APP_WIREGUARD" \
             -e APP_TAILSCALE="$APP_TAILSCALE" \
             -e APP_ZEROTIER="$APP_ZEROTIER" \
-            -e APP_FRPC="$APP_FRPC" \
             -e KMOD_IGC="$KMOD_IGC" \
-            -e KMOD_IXGBE="$KMOD_IXGBE" \
-            -e KMOD_E1000E="$KMOD_E1000E" \
-            -e KMOD_R8169="$KMOD_R8169" \
             -e KMOD_R8125="$KMOD_R8125" \
             immortalwrt/imagebuilder:x86-64-openwrt-${{ env.FINAL_VERSION }} /bin/bash /home/build/immortalwrt/build.sh
 
@@ -211,20 +181,14 @@ jobs:
           body: |
             ### 🛠️ 终极架构与专属特性
             - **无损出包**: 系统盘直接在云端构建为 ${{ env.INPUT_ROOTFS }}MB。
-            - **专属网络**: 强制 eth0 独占 WAN，其余网口桥接 LAN；单网口自动切换纯旁路由模式。
-            - **源与数据**: 官方源强制修正，Collectd 监控数据转移至 /opt 保障闪存寿命。
-            - **极致灵活**: 基于 Flex 构建理念，按需自由定制，纯粹的极致效能体验。
+            - **存储分区**: 自动开垦硬盘剩余空间挂载至 `/mnt/sda3`。
+            - **核心组件**: 已集成最新的 WeChatPush 与 Diskman。
           files: ${{ github.workspace }}/bin/targets/x86/64/${{ env.FIRMWARE_NAME }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 生成首页摘要与直达链接 (Job Summary)
         run: |
-          echo "### 🎉 专属固件编译与发布成功！" >> $GITHUB_STEP_SUMMARY
-          echo "你的 Flex-ImmortalWrt 固件已经就绪，可以直接下载刷入机器。" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎉 Flex-ImmortalWrt 编译成功！" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **核心版本:** \`${{ env.FINAL_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **系统盘容量:** \`${{ env.INPUT_ROOTFS }} MB\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **固件文件名:** \`${{ env.FIRMWARE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📥 **下载入口:** 👉 [**点击这里直达本版本的 Release 页面获取固件**](https://github.com/${{ github.repository }}/releases/tag/Build-Custom-${{ env.FINAL_VERSION }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "- **固件版本:** \`${{ env.FINAL_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **下载入口:** 👉 [**点击直达 Release 页面**](https://github.com/${{ github.repository }}/releases/tag/Build-Custom-${{ env.FINAL_VERSION }})" >> $GITHUB_STEP_SUMMARY
