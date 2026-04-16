@@ -200,3 +200,5 @@ jobs:
           echo "- **固件文件名:** \`${{ env.FIRMWARE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📥 **下载入口:** 👉 [**点击直达 Release 页面**](https://github.com/${{ github.repository }}/releases/tag/Build-Custom-${{ env.FINAL_VERSION }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
