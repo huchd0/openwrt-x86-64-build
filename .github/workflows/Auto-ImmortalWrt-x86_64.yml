@@ -201,7 +201,8 @@ jobs:
           cd ${{ github.workspace }}/bin/targets/x86/64/
           ORIGINAL_FILE=$(ls *-squashfs-combined-efi.img.gz | head -n 1)
           NEW_NAME="ImmortalWrt-Auto-${{ env.FINAL_VERSION }}-x86-64-squashfs-efi.img.gz"
-          mv "$ORIGINAL_FILE" "$NEW_NAME"
+          # 加上 sudo，强制提升权限来重命名 root 所有的文件
+          sudo mv "$ORIGINAL_FILE" "$NEW_NAME"
           echo "FIRMWARE_NAME=$NEW_NAME" >> $GITHUB_ENV
 
       - name: 发布固件到 Releases
