@@ -433,9 +433,6 @@ declare -a PKG_LIST=(
 # ==========================================
 # >>> 7. 开始编译打包 (防漏保底与数组展开) <<<
 # ==========================================
-echo ">>> 正在补全配置文件依赖 (make defconfig) <<<"
-make defconfig  
-
 echo ">>> 开始 Make Image 打包 <<<"
 # 🎯 核心变更：使用 ${PKG_LIST[*]} 将 Bash 数组展开为按空格分隔的字符串
 make image PROFILE="generic" PACKAGES="${PKG_LIST[*]}" FILES="files"
