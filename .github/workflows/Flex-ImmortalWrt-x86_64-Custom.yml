@@ -216,3 +216,15 @@ jobs:
             - **极致灵活**: 基于 Flex 构建理念，按需自由定制，纯粹的极致效能体验。
           files: ${{ github.workspace }}/bin/targets/x86/64/${{ env.FIRMWARE_NAME }}
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 生成首页摘要与直达链接 (Job Summary)
+        run: |
+          echo "### 🎉 专属固件编译与发布成功！" >> $GITHUB_STEP_SUMMARY
+          echo "你的 Flex-ImmortalWrt 固件已经就绪，可以直接下载刷入机器。" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **核心版本:** \`${{ env.FINAL_VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **系统盘容量:** \`${{ env.INPUT_ROOTFS }} MB\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **固件文件名:** \`${{ env.FIRMWARE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📥 **下载入口:** 👉 [**点击这里直达本版本的 Release 页面获取固件**](https://github.com/${{ github.repository }}/releases/tag/Build-Custom-${{ env.FINAL_VERSION }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
