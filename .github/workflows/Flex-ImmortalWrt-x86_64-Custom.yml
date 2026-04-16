@@ -27,11 +27,11 @@ on:
       app_homeproxy:
         description: "🛡️ HomeProxy (轻量代理工具)"
         type: boolean
-        default: true
+        default: false
       app_openclash:
         description: "🔌 OpenClash (全能代理工具)"
         type: boolean
-        default: false
+        default: true
       app_passwall:
         description: "🚀 PassWall (经典的代理工具)"
         type: boolean
