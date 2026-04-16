@@ -34,14 +34,14 @@ echo ">>> 正在创建系统注入目录 <<<"
 mkdir -p files/root
 mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/init.d
-mkdir -p files/usr/bin            # 🚨 修复：提前创建 bin 目录，防止写入升级脚本时报错
+mkdir -p files/usr/bin
+mkdir -p files/etc/crontabs
 
 # ==========================================
 # >>> 3. 下载第三方插件、内核与驱动 <<<
 # ==========================================
 echo ">>> 正在拉取第三方资源 <<<"
 
-# 🎯 优化：使用 jq 精准解析 GitHub API，防止 grep 抓错版本，并加入 -L 跟随重定向
 OPENCLASH_URL=$(curl -sL https://api.github.com/repos/vernesong/OpenClash/releases | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
 if [ -n "$OPENCLASH_URL" ]; then
     wget -qO files/root/luci-app-openclash.apk "$OPENCLASH_URL"
@@ -52,7 +52,6 @@ if [ -n "$ARGON_URL" ]; then
     wget -qO files/root/luci-theme-argon.apk "$ARGON_URL"
 fi
 
-# 提前下载并注入 OpenClash Meta 兼容版内核
 echo "正在下载 OpenClash Meta 内核..."
 mkdir -p files/etc/openclash/core
 wget -qO files/etc/openclash/core/meta.tar.gz "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz"
@@ -61,20 +60,17 @@ mv files/etc/openclash/core/clash files/etc/openclash/core/clash_meta
 chmod +x files/etc/openclash/core/clash_meta
 rm -f files/etc/openclash/core/meta.tar.gz
 
-# --- 注入 MT7925 官方蓝牙与无线固件 (GitLab 锁定版本) ---
 echo "正在注入 MT7925 官方底层固件..."
 mkdir -p files/lib/firmware/mediatek/mt7925
 wget -qO files/lib/firmware/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/BT_RAM_CODE_MT7925_1_1_hdr.bin"
 wget -qO files/lib/firmware/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin"
 wget -qO files/lib/firmware/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/53539c0625c5dbdd2308146e3435f06b51f68c01/mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin"
 
-
 # ==========================================
 # >>> 4. 编写全自动开机初始化脚本 <<<
 # ==========================================
 echo ">>> 正在生成初始化与网卡守护脚本 <<<"
 
-# --- 🎯 核心黑科技：后台自动抓取真实 PCI 路径，注入专属 Wi-Fi 参数 ---
 cat << 'EOF_WIFI' > files/etc/init.d/wifi-auto-patch
 #!/bin/sh /etc/rc.common
 START=99
@@ -117,7 +113,6 @@ start() {
 EOF_WIFI
 chmod +x files/etc/init.d/wifi-auto-patch
 
-# --- 🎯 系统与网络初始化大管家 ---
 cat << EOF > files/etc/uci-defaults/99-custom-setup
 #!/bin/sh
 
@@ -136,7 +131,7 @@ uci set system.@system[0].zonename='Asia/Shanghai'
 uci set system.@system[0].hostname='Tanxm'
 uci commit system
 
-# 4. 智能网口分配逻辑 (自动推断 WAN/LAN)
+# 4. 智能网口分配逻辑
 INTERFACES=\$(ls /sys/class/net | grep -E '^eth[0-9]+' | sort)
 PORT_COUNT=\$(echo "\$INTERFACES" | wc -w)
 if [ "\$PORT_COUNT" -eq 1 ]; then
@@ -159,37 +154,47 @@ else
 fi
 uci commit network
 
-# 5. 智能大分区强制挂载保护
-if ! lsblk | grep -q sda3; then
-    echo -e "w" | fdisk /dev/sda >/dev/null 2>&1
-    echo -e "n\n3\n\n\nw" | fdisk /dev/sda >/dev/null 2>&1
-    partprobe /dev/sda >/dev/null 2>&1 || true
-    sleep 3
-    if lsblk | grep -q sda3; then
-        mkfs.ext4 -F /dev/sda3 >/dev/null 2>&1
+# 5. 智能大分区强制挂载保护 (适配 SATA/NVMe/虚拟机)
+ROOT_DISK=\$(lsblk -ndo NAME,TYPE | awk '\$2=="disk"{print \$1; exit}')
+if [ -n "\$ROOT_DISK" ]; then
+    ROOT_DEV="/dev/\$ROOT_DISK"
+    if [[ "\$ROOT_DISK" =~ [0-9]$ ]]; then
+        PART_DEV="\${ROOT_DEV}p3"
+    else
+        PART_DEV="\${ROOT_DEV}3"
+    fi
+
+    if ! lsblk | grep -q "\${PART_DEV##*/}"; then
+        parted -s "\$ROOT_DEV" mkpart primary ext4 0% 100%
+        partprobe "\$ROOT_DEV" >/dev/null 2>&1 || true
+        sleep 3
+        if lsblk | grep -q "\${PART_DEV##*/}"; then
+            mkfs.ext4 -F "\$PART_DEV" >/dev/null 2>&1
+        fi
+    fi
+
+    TARGET_UUID=\$(blkid -s UUID -o value "\$PART_DEV" 2>/dev/null)
+    if [ -n "\$TARGET_UUID" ]; then
+        echo "config 'global'" > /etc/config/fstab
+        echo "  option  anon_swap   '0'" >> /etc/config/fstab
+        echo "  option  anon_mount  '0'" >> /etc/config/fstab
+        echo "  option  auto_swap   '1'" >> /etc/config/fstab
+        echo "  option  auto_mount  '1'" >> /etc/config/fstab
+        echo "  option  delay_root  '5'" >> /etc/config/fstab
+        echo "  option  check_fs    '0'" >> /etc/config/fstab
+        
+        uci add fstab mount
+        uci set fstab.@mount[-1].uuid="\$TARGET_UUID"
+        uci set fstab.@mount[-1].target='/mnt/sda3'
+        uci set fstab.@mount[-1].enabled='1'
+        uci commit fstab
+        
+        mkdir -p /mnt/sda3
+        mount "\$PART_DEV" /mnt/sda3 2>/dev/null || true
     fi
 fi
-TARGET_UUID=\$(blkid -s UUID -o value /dev/sda3 2>/dev/null)
-if [ -n "\$TARGET_UUID" ]; then
-    echo "config 'global'" > /etc/config/fstab
-    echo "  option  anon_swap   '0'" >> /etc/config/fstab
-    echo "  option  anon_mount  '0'" >> /etc/config/fstab
-    echo "  option  auto_swap   '1'" >> /etc/config/fstab
-    echo "  option  auto_mount  '1'" >> /etc/config/fstab
-    echo "  option  delay_root  '5'" >> /etc/config/fstab
-    echo "  option  check_fs    '0'" >> /etc/config/fstab
-    
-    uci add fstab mount
-    uci set fstab.@mount[-1].uuid="\$TARGET_UUID"
-    uci set fstab.@mount[-1].target='/mnt/sda3'
-    uci set fstab.@mount[-1].enabled='1'
-    uci commit fstab
-    
-    mkdir -p /mnt/sda3
-    mount /dev/sda3 /mnt/sda3 2>/dev/null || true
-fi
 
-# 6. 终极性能监控图表修复 (数据落盘至 sda3)
+# 6. 终极性能监控图表修复
 if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     [ ! -f "/etc/config/luci_statistics" ] && touch /etc/config/luci_statistics
     uci set luci_statistics.collectd=statistics
@@ -202,7 +207,6 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     uci set luci_statistics.collectd.ReadThreads='2'
     uci set luci_statistics.collectd.enable='1'
     
-    # 利用假配置骗开图表假死管道
     uci del luci_statistics.collectd_network.enable 2>/dev/null || true
     uci set luci_statistics.collectd_mqtt=statistics
 
@@ -224,7 +228,6 @@ if [ -x "/etc/init.d/collectd" ] && [ ! -f "/etc/collectd_inited" ]; then
     uci set luci_statistics.collectd_cpu=statistics
     uci set luci_statistics.collectd_cpu.enable='1'
     
-    # 注入自定义 Ping 节点
     uci set luci_statistics.collectd_ping=statistics
     uci set luci_statistics.collectd_ping.enable='1'
     uci delete luci_statistics.collectd_ping.Hosts 2>/dev/null
@@ -248,12 +251,10 @@ fi
 apk add -q --allow-untrusted /root/*.apk
 rm -f /root/*.apk
 
-# 自我销毁
 rm -f /etc/uci-defaults/99-custom-setup
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/99-custom-setup
-
 
 # ==========================================
 # >>> 5. 生成全自动静默升级脚本 (双引擎自适应) <<<
@@ -269,7 +270,6 @@ fi
 
 echo "===== Auto Upgrade Start: $(date) =====" >> "$LOGFILE"
 
-# 嗅探当前环境
 if command -v apk >/dev/null 2>&1; then
     PKG_ENGINE="apk"
     openclash_before=$(apk info -v luci-app-openclash 2>/dev/null)
@@ -293,7 +293,7 @@ if [ "$PKG_ENGINE" = "apk" ]; then
             *)
                 echo "升级: $pkg" >> "$LOGFILE"
                 apk add -u "$pkg" >> "$LOGFILE" 2>&1
-                sleep 1 # 🎯 优化：增加休眠，防止升级过程突发高负载
+                sleep 1
                 ;;
         esac
     done
@@ -308,7 +308,7 @@ elif [ "$PKG_ENGINE" = "opkg" ]; then
             *)
                 echo "升级: $pkg" >> "$LOGFILE"
                 opkg upgrade "$pkg" >> "$LOGFILE" 2>&1
-                sleep 1 # 🎯 优化：增加休眠，防止升级过程突发高负载
+                sleep 1
                 ;;
         esac
     done
@@ -324,10 +324,18 @@ echo "===== Auto Upgrade End: $(date) =====" >> "$LOGFILE"
 EOF_UPGRADE
 
 chmod +x files/usr/bin/upg
-mkdir -p files/etc/crontabs
 echo "0 2 */2 * * /usr/bin/upg" > files/etc/crontabs/root
 echo "" >> files/etc/crontabs/root
 chmod 0600 files/etc/crontabs/root
+
+cat << 'EOF_CRON' > files/etc/uci-defaults/99-cron-enable
+#!/bin/sh
+/etc/init.d/cron enable
+/etc/init.d/cron restart
+rm -f /etc/uci-defaults/99-cron-enable
+exit 0
+EOF_CRON
+chmod +x files/etc/uci-defaults/99-cron-enable
 
 # ==========================================
 # >>> 6. 固件预装软件列表 (极致分类与注释版) <<<
@@ -337,7 +345,7 @@ echo ">>> 正在配置官方软件列表 <<<"
 declare -a PKG_LIST=(
     # 🌐 1. 核心网络控制
     "-dnsmasq"                          # [卸载] 自带的简配版 dnsmasq
-    "dnsmasq-full"                      # [安装] 功能完整的 dnsmasq-full (OpenClash 等强依赖)
+    "dnsmasq-full"                      # [安装] 功能完整的 dnsmasq-full
 
     # 🖥️ 2. Web 管理界面 (LuCI) & 全局中文
     "luci"                              # LuCI 基础框架
@@ -353,22 +361,22 @@ declare -a PKG_LIST=(
     "lsblk"                             # 块设备查看工具
     "parted"                            # 分区管理工具
     "fdisk"                             # 传统磁盘分区工具
-    "e2fsprogs"                         # ext4 文件系统工具 (格式化sda3必备)
+    "e2fsprogs"                         # ext4 文件系统工具
     "kmod-usb-storage"                  # USB 存储核心驱动
-    "kmod-usb-storage-uas"              # USB 高速传输驱动 (UAS协议)
+    "kmod-usb-storage-uas"              # USB 高速传输驱动
     "kmod-fs-ext4"                      # ext4 文件系统驱动
     "kmod-fs-ntfs3"                     # ntfs 高性能挂载驱动
     "kmod-fs-vfat"                      # vfat 文件系统驱动
     "kmod-fs-exfat"                     # exfat 文件系统驱动
 
-    # ⚙️ 4. 核心系统运行依赖 (高级脚本/插件必备)
+    # ⚙️ 4. 核心系统运行依赖
     "coreutils-nohup"                   # 后台运行命令支持
     "coreutils-base64"                  # Base64 编码工具
     "coreutils-sort"                    # 排序工具
     "bash"                              # Bash 解释器
-    "jq"                                # JSON 解析工具 (API抓取必备)
+    "jq"                                # JSON 解析工具
     "curl"                              # 网络请求工具
-    "ca-bundle"                         # 根证书依赖 (https必须)
+    "ca-bundle"                         # 根证书依赖
     "libcap"                            # 权限控制库
     "libcap-bin"                        # 权限控制工具
     "ruby"                              # Ruby 运行环境
@@ -376,65 +384,64 @@ declare -a PKG_LIST=(
     "unzip"                             # 压缩包解压工具
 
     # 🚀 5. 高级网络与转发控制
-    "ip-full"                           # 完整版 iproute2 路由控制
-    "iptables-mod-tproxy"               # Tproxy 透明代理内核模块
-    "iptables-mod-extra"                # iptables 额外扩展模块
+    "ip-full"                           # 完整版 iproute2
+    "iptables-mod-tproxy"               # Tproxy 透明代理
+    "iptables-mod-extra"                # iptables 额外扩展
     "kmod-tun"                          # TUN 虚拟网卡驱动
     "kmod-inet-diag"                    # 网络连接诊断驱动
     "kmod-nft-tproxy"                   # Nftables Tproxy 驱动
-    "kmod-igc"                          # Intel i225/i226 2.5G 网卡驱动
+    "kmod-igc"                          # Intel 2.5G 网卡驱动
     "kmod-igb"                          # Intel 千兆网卡驱动
-    "kmod-r8169"                        # Realtek 网卡通用驱动
-    "iwinfo"                            # 无线硬件信息查看工具
-    "kmod-tcp-bbr"                      # BBR 拥塞控制
-    "kmod-nft-offload"                  # UPnP / NAT-PMP 自动端口映射
-    "luci-app-upnp"                     # 开关 UPnP
-    "luci-i18n-upnp-zh-cn"              # 开关 UPnP中文
-    "miniupnpd-nftables"                # 硬件/软件流量卸载、UPnP后台服务
+    "kmod-r8169"                        # Realtek 网卡驱动
+    "iwinfo"                            # 无线硬件信息工具
+    "kmod-tcp-bbr"                      # BBR 拥塞控制 (提升代理速度)
+    "kmod-nft-offload"                  # 流量卸载引擎 (降低满速下载CPU占用)
 
-    # 📶 6. 无线与蓝牙底层驱动 (针对 MT7925 & WPA3)
+    # 📶 6. 无线与蓝牙底层驱动
     "-wpad-basic-mbedtls"               # [卸载] 简配版 WPA 认证
     "-wpad-basic-wolfssl"               # [卸载] 简配版 WPA 认证
-    "wpad-openssl"                      # [安装] 完整版 WPA3/Sae 认证组件
-    "kmod-mt7925e"                      # MT7925 PCIe 网卡底层驱动
-    "kmod-mt7925-firmware"              # MT7925 固件支持包
-    "kmod-btusb"                        # 蓝牙 USB 底层总线驱动
-    "bluez-daemon"                      # 蓝牙协议栈守护进程
-    "kmod-input-uinput"                 # 蓝牙输入设备兼容驱动
+    "wpad-openssl"                      # [安装] 完整版 WPA3 认证
+    "kmod-mt7925e"                      # MT7925 PCIe 驱动
+    "kmod-mt7925-firmware"              # MT7925 固件支持
+    "kmod-btusb"                        # 蓝牙 USB 底层驱动
+    "bluez-daemon"                      # 蓝牙协议栈守护
+    "kmod-input-uinput"                 # 蓝牙输入设备驱动
 
-    # 📊 7. 系统监控与排障工具 (纯净版，剔除报错组件)
+    # 📊 7. 系统监控与排障工具
     "nano"                              # 命令行文本编辑器
-    "htop"                              # 动态系统资源查看器
-    "ethtool"                           # 网卡底层参数调节工具
-    "tcpdump"                           # 命令行抓包神器
-    "mtr"                               # 路由追踪诊断工具
-    "conntrack"                         # 连接数状态查看工具
-    "iftop"                             # 实时流量监控工具
-    "screen"                            # 多窗口终端后台管理
+    "htop"                              # 动态资源查看器
+    "ethtool"                           # 网卡底层参数调节
+    "tcpdump"                           # 命令行抓包工具
+    "mtr"                               # 路由追踪工具
+    "conntrack"                         # 连接数状态工具
+    "iftop"                             # 实时流量监控
+    "screen"                            # 多窗口终端
     "collectd-mod-thermal"              # 性能图表: 温度监控
     "collectd-mod-sensors"              # 性能图表: 传感器数据
     "collectd-mod-cpu"                  # 性能图表: CPU 负载
-    "collectd-mod-ping"                 # 性能图表: 网络延迟追踪
+    "collectd-mod-ping"                 # 性能图表: 网络延迟
     "collectd-mod-interface"            # 性能图表: 接口流量
-    "collectd-mod-rrdtool"              # 性能图表: RRD 数据库落盘支持
-    "collectd-mod-iwinfo"               # 性能图表: 无线状态收集
+    "collectd-mod-rrdtool"              # 性能图表: 数据库落盘
+    "collectd-mod-iwinfo"               # 性能图表: 无线状态
 
-    # 🧩 8. 扩展应用插件 (LuCI Apps)
+    # 🧩 8. 扩展应用插件
     "luci-app-ttyd"                     # 网页终端命令行
     "luci-i18n-ttyd-zh-cn"              # 网页终端中文包
-    "luci-app-ksmbd"                    # 内核级极速 SMB 共享
+    "luci-app-ksmbd"                    # 内核级 SMB 共享
     "luci-i18n-ksmbd-zh-cn"             # SMB 共享中文包
     "luci-app-nlbwmon"                  # 网络带宽精准监控
     "luci-i18n-nlbwmon-zh-cn"           # 带宽监控中文包
     "luci-app-statistics"               # 性能统计全功能图表
-    "luci-i18n-statistics-zh-cn"        # 性能统计图表中文包
+    "luci-i18n-statistics-zh-cn"        # 性能图表中文包
+    "luci-app-upnp"                     # UPnP 自动端口转发界面
+    "luci-i18n-upnp-zh-cn"              # UPnP 界面中文包
+    "miniupnpd-nftables"                # UPnP 底层服务 (基于 nftables)
 )
 
 # ==========================================
-# >>> 7. 开始编译打包 (防漏保底与数组展开) <<<
+# >>> 7. 开始编译打包 <<<
 # ==========================================
 echo ">>> 开始 Make Image 打包 <<<"
-# 🎯 核心变更：使用 ${PKG_LIST[*]} 将 Bash 数组展开为按空格分隔的字符串
 make image PROFILE="generic" PACKAGES="${PKG_LIST[*]}" FILES="files"
 
 echo ">>> 8. 提取并清理生成的固件 <<<"
