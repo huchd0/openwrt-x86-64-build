@@ -83,17 +83,17 @@ on:
         type: boolean
         default: false
 
-      # ====== 实体网卡驱动 ======
-      kmod_igc:
-        description: "🔌 Intel i225/i226 (网卡驱动)"
+      # ====== 🌟 整合版：实体网卡驱动 ======
+      kmod_intel:
+        description: "🔌 Intel 网卡驱动 (千兆/2.5G/万兆)"
         type: boolean
         default: true
-      kmod_r8125:
-        description: "🔌 Realtek 瑞昱 2.5G (网卡驱动)"
+      kmod_realtek:
+        description: "🔌 Realtek 瑞昱驱动 (千兆/2.5G/5G)"
         type: boolean
-        default: false
+        default: true
 
-# 🌟 优化项1：授予写入 Releases 的权限，防止 403 报错
+# 授予写入 Releases 的权限
 permissions:
   contents: write
 
@@ -101,7 +101,6 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      # 🌟 优化项2：锁定上海时区，让 Release 发布时间精准无误
       TZ: Asia/Shanghai
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       INPUT_IP: ${{ github.event.inputs.custom_router_ip }}
@@ -122,8 +121,8 @@ jobs:
       APP_WIREGUARD: ${{ github.event.inputs.app_wireguard }}
       APP_TAILSCALE: ${{ github.event.inputs.app_tailscale }}
       APP_ZEROTIER: ${{ github.event.inputs.app_zerotier }}
-      KMOD_IGC: ${{ github.event.inputs.kmod_igc }}
-      KMOD_R8125: ${{ github.event.inputs.kmod_r8125 }}
+      KMOD_INTEL: ${{ github.event.inputs.kmod_intel }}
+      KMOD_REALTEK: ${{ github.event.inputs.kmod_realtek }}
 
     steps:
       - name: Checkout code
@@ -167,8 +166,8 @@ jobs:
             -e APP_WIREGUARD="$APP_WIREGUARD" \
             -e APP_TAILSCALE="$APP_TAILSCALE" \
             -e APP_ZEROTIER="$APP_ZEROTIER" \
-            -e KMOD_IGC="$KMOD_IGC" \
-            -e KMOD_R8125="$KMOD_R8125" \
+            -e KMOD_INTEL="$KMOD_INTEL" \
+            -e KMOD_REALTEK="$KMOD_REALTEK" \
             immortalwrt/imagebuilder:x86-64-openwrt-${{ env.FINAL_VERSION }} /bin/bash /home/build/immortalwrt/build.sh
 
       - name: 重命名专属固件
