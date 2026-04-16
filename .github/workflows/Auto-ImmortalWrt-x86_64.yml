@@ -3,6 +3,7 @@ name: Auto-ImmortalWrt-x86_64-手选稳定版
 on:
   workflow_dispatch:
     inputs:
+      # ====== 基础设定 ======
       luci_version:
         description: "选择版本 (Auto 智能抓取)"
         required: false
@@ -14,38 +15,146 @@ on:
         required: true
         default: "192.168.100.1"
       rootfs_size:
-        description: '核心系统(sda2)最终扩容容量 (MB)'
+        description: '核心系统最终容量 (MB) [SquashFS原生直出]'
         required: true
         default: '10240'
-      # 插件开关 (保持你的勾选习惯)
-      app_openclash:
-        type: boolean
-        default: true
+        
+      # ====== 核心网络与存储 ======
       include_docker:
+        description: "🐳 集成 Docker 引擎"
         type: boolean
         default: true
+      app_homeproxy:
+        description: "🛡️ 集成 HomeProxy (全能代理)"
+        type: boolean
+        default: true
+      app_openclash:
+        description: "🔌 集成 OpenClash"
+        type: boolean
+        default: false
+      app_passwall:
+        description: "🚀 集成 PassWall"
+        type: boolean
+        default: false
+      app_ksmbd:
+        description: "📁 集成 KSMBD (局域网共享)"
+        type: boolean
+        default: true
+
+      # ====== 常用扩展工具 ======
       theme_argon:
+        description: "🎨 集成 Argon 主题"
         type: boolean
         default: true
+      app_adguardhome:
+        description: "🛑 集成 AdGuardHome"
+        type: boolean
+        default: false
+      app_alist:
+        description: "🗂️ 集成 AList"
+        type: boolean
+        default: false
+      app_qbittorrent:
+        description: "🧲 集成 qBittorrent"
+        type: boolean
+        default: false
+      app_mwan3:
+        description: "⚖️ 集成 MWAN3 (多线多拨)"
+        type: boolean
+        default: false
+      app_vlmcsd:
+        description: "🔑 集成 KMS 激活服务"
+        type: boolean
+        default: false
+      app_statistics:
+        description: "📊 集成 Statistics (状态监控)"
+        type: boolean
+        default: true
+      app_sqm:
+        description: "🚦 集成 SQM QoS"
+        type: boolean
+        default: false
+      app_wireguard:
+        description: "🛡️ 集成 WireGuard"
+        type: boolean
+        default: false
+      app_tailscale:
+        description: "🕸️ 集成 Tailscale"
+        type: boolean
+        default: false
+      app_zerotier:
+        description: "🌍 集成 ZeroTier"
+        type: boolean
+        default: false
+      app_frpc:
+        description: "🚇 集成 FRPC (内网穿透)"
+        type: boolean
+        default: false
+
+      # ====== 实体网卡驱动 ======
+      kmod_igc:
+        description: "🔌 驱动: Intel i225/i226 (2.5G)"
+        type: boolean
+        default: true
+      kmod_ixgbe:
+        description: "🔌 驱动: Intel 10G (万兆)"
+        type: boolean
+        default: false
+      kmod_e1000e:
+        description: "🔌 驱动: Intel 千兆"
+        type: boolean
+        default: false
+      kmod_r8169:
+        description: "🔌 驱动: Realtek 瑞昱千兆"
+        type: boolean
+        default: false
+      kmod_r8125:
+        description: "🔌 驱动: Realtek 瑞昱 2.5G"
+        type: boolean
+        default: false
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       INPUT_IP: ${{ github.event.inputs.custom_router_ip }}
       INPUT_ROOTFS: ${{ github.event.inputs.rootfs_size }}
-      APP_OPENCLASH: ${{ github.event.inputs.app_openclash }}
+      
+      # UI 变量映射
       INCLUDE_DOCKER: ${{ github.event.inputs.include_docker }}
+      APP_HOMEPROXY: ${{ github.event.inputs.app_homeproxy }}
+      APP_OPENCLASH: ${{ github.event.inputs.app_openclash }}
+      APP_PASSWALL: ${{ github.event.inputs.app_passwall }}
+      APP_KSMBD: ${{ github.event.inputs.app_ksmbd }}
       THEME_ARGON: ${{ github.event.inputs.theme_argon }}
+      APP_ADGUARDHOME: ${{ github.event.inputs.app_adguardhome }}
+      APP_ALIST: ${{ github.event.inputs.app_alist }}
+      APP_QBITTORRENT: ${{ github.event.inputs.app_qbittorrent }}
+      APP_MWAN3: ${{ github.event.inputs.app_mwan3 }}
+      APP_VLMCSD: ${{ github.event.inputs.app_vlmcsd }}
+      APP_STATISTICS: ${{ github.event.inputs.app_statistics }}
+      APP_SQM: ${{ github.event.inputs.app_sqm }}
+      APP_WIREGUARD: ${{ github.event.inputs.app_wireguard }}
+      APP_TAILSCALE: ${{ github.event.inputs.app_tailscale }}
+      APP_ZEROTIER: ${{ github.event.inputs.app_zerotier }}
+      APP_FRPC: ${{ github.event.inputs.app_frpc }}
+      KMOD_IGC: ${{ github.event.inputs.kmod_igc }}
+      KMOD_IXGBE: ${{ github.event.inputs.kmod_ixgbe }}
+      KMOD_E1000E: ${{ github.event.inputs.kmod_e1000e }}
+      KMOD_R8169: ${{ github.event.inputs.kmod_r8169 }}
+      KMOD_R8125: ${{ github.event.inputs.kmod_r8125 }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: 设置脚本权限
-        run: chmod +x ${{ github.workspace }}/x86-64/auto-build-script.sh
+        run: |
+          sed -i 's/\r$//' ${{ github.workspace }}/x86-64/auto-build-script.sh
+          chmod +x ${{ github.workspace }}/x86-64/auto-build-script.sh
 
-      - name: 解析版本
+      - name: 解析智能版本号
         id: resolve_version
         run: |
           if [ "${{ github.event.inputs.luci_version }}" == "Auto" ]; then
@@ -55,7 +164,7 @@ jobs:
             echo "FINAL_VERSION=${{ github.event.inputs.luci_version }}" >> $GITHUB_ENV
           fi
 
-      - name: 执行编译
+      - name: 执行云端编译
         run: |
           docker run --rm -i \
             --user root \
@@ -63,20 +172,49 @@ jobs:
             -v "${{ github.workspace }}/x86-64/auto-build-script.sh:/home/build/immortalwrt/build.sh" \
             -e CUSTOM_IP="$INPUT_IP" \
             -e ROOTFS_SIZE="$INPUT_ROOTFS" \
-            -e APP_OPENCLASH="$APP_OPENCLASH" \
             -e INCLUDE_DOCKER="$INCLUDE_DOCKER" \
+            -e APP_HOMEPROXY="$APP_HOMEPROXY" \
+            -e APP_OPENCLASH="$APP_OPENCLASH" \
+            -e APP_PASSWALL="$APP_PASSWALL" \
+            -e APP_KSMBD="$APP_KSMBD" \
             -e THEME_ARGON="$THEME_ARGON" \
+            -e APP_ADGUARDHOME="$APP_ADGUARDHOME" \
+            -e APP_ALIST="$APP_ALIST" \
+            -e APP_QBITTORRENT="$APP_QBITTORRENT" \
+            -e APP_MWAN3="$APP_MWAN3" \
+            -e APP_VLMCSD="$APP_VLMCSD" \
+            -e APP_STATISTICS="$APP_STATISTICS" \
+            -e APP_SQM="$APP_SQM" \
+            -e APP_WIREGUARD="$APP_WIREGUARD" \
+            -e APP_TAILSCALE="$APP_TAILSCALE" \
+            -e APP_ZEROTIER="$APP_ZEROTIER" \
+            -e APP_FRPC="$APP_FRPC" \
+            -e KMOD_IGC="$KMOD_IGC" \
+            -e KMOD_IXGBE="$KMOD_IXGBE" \
+            -e KMOD_E1000E="$KMOD_E1000E" \
+            -e KMOD_R8169="$KMOD_R8169" \
+            -e KMOD_R8125="$KMOD_R8125" \
             immortalwrt/imagebuilder:x86-64-openwrt-${{ env.FINAL_VERSION }} /bin/bash /home/build/immortalwrt/build.sh
 
-      - name: 发布固件
+      - name: 重命名固件 (加上 Auto 标识)
+        run: |
+          cd ${{ github.workspace }}/bin/targets/x86/64/
+          ORIGINAL_FILE=$(ls *-squashfs-combined-efi.img.gz | head -n 1)
+          NEW_NAME="ImmortalWrt-Auto-${{ env.FINAL_VERSION }}-x86-64-squashfs-efi.img.gz"
+          mv "$ORIGINAL_FILE" "$NEW_NAME"
+          echo "FIRMWARE_NAME=$NEW_NAME" >> $GITHUB_ENV
+
+      - name: 发布固件到 Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: Build-${{ env.FINAL_VERSION }}
-          name: ImmortalWrt ${{ env.FINAL_VERSION }} 实体机终极版
+          tag_name: Build-Auto-${{ env.FINAL_VERSION }}
+          name: ImmortalWrt Auto ${{ env.FINAL_VERSION }} 究极全能版
           body: |
-            ### 🛠️ 终极修补日志
-            - **OpenClash**: 预集成 Meta 兼容版核心。
-            - **网络**: 暴力重建 /etc/config/network，杜绝 eth0 幽灵绑定。
-            - **磁盘**: 引入 e2fsck 强行修复 + 强制同步，确保 10GB 扩容成功且系统可写。
-          files: ${{ github.workspace }}/bin/targets/x86/64/*-ext4-combined-efi.img.gz
+            ### 🛠️ 终极架构与特性
+            - **架构回归**: 重新采用官方正统 `squashfs` 架构，底层自带 Overlay 保护机制，彻底告别报错。
+            - **原生重置**: 系统后台“备份与升级”中的**恢复出厂设置**按钮现已完美可用。
+            - **无损出包**: 系统盘直接在云端构建为 ${{ env.INPUT_ROOTFS }}MB，刷入即满血。
+            - **专属网络**: 强制 eth0 独占 WAN，其余网口桥接 LAN；单网口自动切换纯旁路由模式。
+            - **自由定制**: 支持在 GitHub 编译前自选组装超过 20+ 款高阶路由插件。
+          files: ${{ github.workspace }}/bin/targets/x86/64/${{ env.FIRMWARE_NAME }}
           token: ${{ secrets.GITHUB_TOKEN }}
