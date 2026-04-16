@@ -27,7 +27,7 @@ cat >> $DYNAMIC_SCRIPT << EOF
 [ -f /etc/opkg/distfeeds.conf ] && sed -i 's|mirrors.vsean.net/openwrt|downloads.immortalwrt.org|g' /etc/opkg/distfeeds.conf
 [ -f /etc/apk/repositories ] && sed -i 's|mirrors.vsean.net/openwrt|downloads.immortalwrt.org|g' /etc/apk/repositories
 
-# --- B. 🌟 吸收你的绝招：全自动开垦剩余空间并挂载到 /opt ---
+# --- B. 全自动开垦剩余空间并挂载到 /opt ---
 if ! lsblk | grep -q sda3; then
     # 模拟键盘按键，自动新建 sda3 吃满剩余空间
     echo -e "n\n3\n\n\nw\n" | fdisk /dev/sda >/dev/null 2>&1
@@ -105,15 +105,17 @@ fi
 EOF
 
 # =========================================================
-# 2. 静默预装软件包 (精准适配)
+# 2. 静默预装软件包
 # =========================================================
 BASE_PACKAGES=""
 
-# 核心底层增强工具 (加入 e2fsprogs 确保格式化 sda3 成功)
-BASE_PACKAGES="$BASE_PACKAGES sgdisk nano wget-ssl luci-compat e2fsprogs fdisk"
-BASE_PACKAGES="$BASE_PACKAGES pciutils usbutils ethtool iperf3 irqbalance kmod-vmxnet3"
+# 🌟 核心底层增强与 SSL 证书 (修复 https 下载)
+BASE_PACKAGES="$BASE_PACKAGES sgdisk nano wget-ssl luci-compat ca-bundle ca-certificates"
 
-# 🌟 找回失落的中文：使用 25.12 唯一正统的软件中心包名
+# 🌟 物理机硬件维护、分区工具与 Web 终端 (找回网页版 TTYD)
+BASE_PACKAGES="$BASE_PACKAGES pciutils usbutils ethtool iperf3 irqbalance kmod-vmxnet3 e2fsprogs fdisk luci-app-ttyd luci-i18n-ttyd-zh-cn"
+
+# 找回失落的中文：使用 25.12 唯一正统的软件中心包名
 BASE_PACKAGES="$BASE_PACKAGES luci-app-package-manager luci-i18n-package-manager-zh-cn"
 
 # 状态监控包 (收集数据到 /opt)
@@ -152,7 +154,7 @@ echo "uci commit" >> $DYNAMIC_SCRIPT
 echo "exit 0" >> $DYNAMIC_SCRIPT
 chmod +x $DYNAMIC_SCRIPT
 
-# 🌟 降维打击源修正：全局搜索替换所有配置内的坏源！
+# 🌟 全局搜索替换所有配置内的坏源！
 find . -type f \( -name "repositories*" -o -name "distfeeds.conf" \) -exec sed -i 's|mirrors.vsean.net/openwrt|downloads.immortalwrt.org|g' {} + 2>/dev/null || true
 
 sed -i "s/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=${ROOTFS_SIZE}/g" .config || echo "CONFIG_TARGET_ROOTFS_PARTSIZE=${ROOTFS_SIZE}" >> .config
