@@ -42,14 +42,22 @@ mkdir -p files/etc/crontabs
 # ==========================================
 echo ">>> 正在拉取第三方资源 <<<"
 
+# --- 🎯 抓取 OpenClash ---
 OPENCLASH_URL=$(curl -sL https://api.github.com/repos/vernesong/OpenClash/releases | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
 if [ -n "$OPENCLASH_URL" ]; then
     wget -qO files/root/luci-app-openclash.apk "$OPENCLASH_URL"
 fi
 
+# --- 🎯 抓取 Argon 主题 ---
 ARGON_URL=$(curl -sL https://api.github.com/repos/jerrykuku/luci-theme-argon/releases | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
 if [ -n "$ARGON_URL" ]; then
     wget -qO files/root/luci-theme-argon.apk "$ARGON_URL"
+fi
+
+# --- 🎯 抓取 NetWiz 网络向导 ---
+NETWIZ_URL=$(curl -sL https://api.github.com/repos/huchd0/luci-app-netwiz/releases | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
+if [ -n "$NETWIZ_URL" ]; then
+    wget -qO files/root/luci-app-netwiz.apk "$NETWIZ_URL"
 fi
 
 echo "正在下载 OpenClash Meta 内核..."
