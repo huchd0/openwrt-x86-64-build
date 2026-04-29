@@ -279,9 +279,6 @@ declare -a PKG_LIST=(
     "luci-i18n-upnp-zh-cn"              # 开关 UPnP中文
     "miniupnpd-nftables"                # 硬件/软件流量卸载、UPnP后台服务
     
-     
-    
-
     # 💻 7. 物理网卡驱动 & 无线工具
     "kmod-igc"                          # Intel i225/i226 2.5G 网卡驱动
     "iwinfo"                            # 无线网络信息查看工具
@@ -304,4 +301,27 @@ for file in bin/targets/x86/64/*combined-efi.img.gz; do
   fi
 done
 
+- name: 🧹 智能清理“无需更新”的运行记录
+        if: always() # 确保无论如何最后都会执行清理
+        run: |
+          echo "开始检索 Workflow 历史记录..."
+          # 获取最近 100 次成功的运行记录，并输出创建和更新的时间戳
+          gh run list --workflow "${{ github.workflow }}" --status success --limit 100 --json databaseId,createdAt,updatedAt > runs.json
+
+          TO_DELETE=$(jq -r '[.[] | select((.updatedAt | fromdateiso8601) - (.createdAt | fromdateiso8601) < 60)] | .[3:] | .[].databaseId' runs.json)
+          
+          if [ -z "$TO_DELETE" ]; then
+            echo "✅ 目前没有多余的旧记录需要清理。"
+          else
+            echo "发现需要清理的未编译记录，开始执行删除..."
+            for run_id in $TO_DELETE; do
+              echo "🗑️ 正在删除跳过的旧记录 ID: $run_id"
+              gh run delete "$run_id"
+            done
+            echo "✅ 清理完成！"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 echo ">>> 全部构建任务已圆满完成！ <<<"
+
