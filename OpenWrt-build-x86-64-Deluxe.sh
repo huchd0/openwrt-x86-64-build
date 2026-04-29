@@ -272,6 +272,12 @@ fi
 apk add -q --allow-untrusted /root/*.apk
 rm -f /root/*.apk
 
+# 强制刷新系统权限与 LuCI 缓存！
+# 1. 清空旧版网页缓存
+rm -rf /tmp/luci-*
+# 2. 重启权限守护进程，让netwiz 插件有访问权限
+/etc/init.d/rpcd restart
+
 rm -f /etc/uci-defaults/99-custom-setup
 exit 0
 EOF
