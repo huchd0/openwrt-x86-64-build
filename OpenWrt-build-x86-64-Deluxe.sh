@@ -55,7 +55,7 @@ if [ -n "$ARGON_URL" ]; then
 fi
 
 # --- 🎯 抓取 NetWiz 网络向导 ---
-NETWIZ_URL=$(curl -sL https://api.github.com/repos/huchd0/luci-app-netwiz/releases | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
+NETWIZ_URL=$(curl -sL https://api.github.com/repos/sdxmhs/luci-app-netwizs/releases | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)
 if [ -n "$NETWIZ_URL" ]; then
     wget -qO files/root/luci-app-netwiz.apk "$NETWIZ_URL"
 fi
